@@ -1,0 +1,41 @@
+# ========================
+# ENV / SECRETS
+# ========================
+.env
+.env.local
+.env.*.local
+*.key
+openai_key.txt
+
+# ========================
+# NODE / DEPENDENCIES
+# ========================
+node_modules/
+
+# ========================
+# NEXT.JS BUILD FILES
+# ========================
+.next/
+out/
+.vercel/
+
+# ========================
+# LOGS
+# ========================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ========================
+# OS FILES
+# ========================
+.DS_Store
+Thumbs.db
+
+# ========================
+# CACHE / TEMP
+# ========================
+.cache/
+tmp/

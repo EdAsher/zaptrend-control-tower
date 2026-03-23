@@ -1,0 +1,92 @@
+
+trend_automation_runs
+   ↓
+run-full-cycle
+   ↓
+ai_sources
+   ↓
+source signal scan
+   ↓
+signal_events
+   ↓
+signal_memory
+   ↓
+trend_scoring
+   ↓
+trend_runs
+   ↓
+trend_outputs
+
+
+
+
+
+
+My honest architecture opinion
+
+Your current setup is actually very good:
+
+Cloud Run (ZapTrend API)
+        ↓
+Firestore (data + learning)
+        ↓
+ZapTrend Control Tower (admin)
+        ↓
+ZapLah (consumer app)
+
+
+
+
+
+
+
+ZapTrend Social Signal Engine v1
+
+Architecture Overview
+
+Social Sources
+     │
+     ▼
+Signal Runs
+     │
+     ▼
+Mentions Detected
+     │
+     ▼
+Signal Scoring
+     │
+     ▼
+Discovery Engine Guidance
+
+
+
+
+
+
+
+
+
+
+ZapTrend Stable Sources Engine Flow
+
+After adding this, your full pipeline becomes:
+
+/admin/discovery/run
+       │
+       ▼
+source_discovery_candidates
+       │
+       ▼
+/admin/discovery/promote
+       │
+       ▼
+ai_sources
+       │
+       ▼
+/admin/trials/evaluate
+       │
+       ▼
+source reputation engine
+       │
+       ▼
+trend generation

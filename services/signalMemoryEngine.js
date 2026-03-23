@@ -1,0 +1,176 @@
+const { db, FieldValue } = require("../config/firestore");
+const { env } = require("../config/env");
+
+function buildId(prefix = "sig") {
+  const stamp = Date.now();
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${prefix}_${stamp}_${rand}`;
+}
+
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function normalizeCountry(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeCategory(value) {
+  return String(value || "").trim();
+}
+
+function makeMemoryKey({ country, category, brand, product, hashtag }) {
+  return [
+    normalizeCountry(country),
+    normalizeCategory(category),
+    normalizeText(brand).toLowerCase(),
+    normalizeText(product).toLowerCase(),
+    normalizeText(hashtag).toLowerCase()
+  ].join("__");
+}
+
+function scoreSignal({ sourceWeight = 1, engagement = 1, freshnessBoost = 1 }) {
+  return Math.round(sourceWeight * engagement * freshnessBoost * 10);
+}
+
+async function ingestSignals({
+  country,
+  category,
+  sourceType = "manual_seed",
+  signals = []
+}) {
+  const normalizedCountry = normalizeCountry(
+    country || env.ZAPTREND_DEFAULT_COUNTRY || "TH"
+  );
+  const normalizedCategory = normalizeCategory(
+    category || env.ZAPTREND_DEFAULT_CATEGORY || "beauty_skincare"
+  );
+
+  const batch = db.batch();
+  const results = [];
+
+  for (const raw of signals) {
+    const brand = normalizeText(raw.brand);
+    const product = normalizeText(raw.product);
+    const hashtag = normalizeText(raw.hashtag);
+    const sourceWeight = Number(raw.source_weight || 1);
+    const engagement = Number(raw.engagement || 1);
+    const freshnessBoost = Number(raw.freshness_boost || 1);
+
+    const signalScore = scoreSignal({
+      sourceWeight,
+      engagement,
+      freshnessBoost
+    });
+
+    const eventId = buildId("signalevt");
+    const memoryKey = makeMemoryKey({
+      country: normalizedCountry,
+      category: normalizedCategory,
+      brand,
+      product,
+      hashtag
+    });
+
+    const eventRef = db.collection("signal_events").doc(eventId);
+    batch.set(eventRef, {
+      signal_event_id: eventId,
+      memory_key: memoryKey,
+      country: normalizedCountry,
+      category: normalizedCategory,
+      brand,
+      product,
+      hashtag,
+      source_type: sourceType,
+      source_ref: raw.source_ref || null,
+      engagement,
+      source_weight: sourceWeight,
+      freshness_boost: freshnessBoost,
+      signal_score: signalScore,
+      created_at: FieldValue.serverTimestamp()
+    });
+
+    const memoryRef = db.collection("signal_memory").doc(memoryKey);
+    batch.set(
+      memoryRef,
+      {
+        memory_key: memoryKey,
+        country: normalizedCountry,
+        category: normalizedCategory,
+        brand,
+        product,
+        hashtag,
+        total_mentions: FieldValue.increment(1),
+        cumulative_score: FieldValue.increment(signalScore),
+        last_signal_score: signalScore,
+        source_types: FieldValue.arrayUnion(sourceType),
+        last_seen_at: FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+
+    results.push({
+      event_id: eventId,
+      memory_key: memoryKey,
+      brand,
+      product,
+      hashtag,
+      signal_score: signalScore
+    });
+  }
+
+  await batch.commit();
+
+  return {
+    ok: true,
+    message: "Signals ingested",
+    country: normalizedCountry,
+    category: normalizedCategory,
+    ingested_count: results.length,
+    results
+  };
+}
+
+async function getSignalMemory({
+  country,
+  category,
+  limit = 20
+}) {
+  const normalizedCountry = normalizeCountry(
+    country || env.ZAPTREND_DEFAULT_COUNTRY || "TH"
+  );
+  const normalizedCategory = normalizeCategory(
+    category || env.ZAPTREND_DEFAULT_CATEGORY || "beauty_skincare"
+  );
+  const normalizedLimit = Number(limit || 20);
+
+  const snap = await db
+    .collection("signal_memory")
+    .where("country", "==", normalizedCountry)
+    .where("category", "==", normalizedCategory)
+    .limit(normalizedLimit)
+    .get();
+
+  const rows = snap.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data()
+  }));
+
+  rows.sort(
+    (a, b) => Number(b.cumulative_score || 0) - Number(a.cumulative_score || 0)
+  );
+
+  return {
+    ok: true,
+    country: normalizedCountry,
+    category: normalizedCategory,
+    total: rows.length,
+    rows
+  };
+}
+
+module.exports = {
+  ingestSignals,
+  getSignalMemory
+};
