@@ -6,15 +6,25 @@
   "main": "index.js",
   "scripts": {
     "dev": "next dev",
+    "dev:web": "next dev",
     "dev:api": "node index.js",
     "build": "next build",
     "start": "node index.js",
     "start:web": "next start",
     "lint": "next lint"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "zaptrend",
+    "nextjs",
+    "express",
+    "firestore",
+    "control-tower"
+  ],
+  "author": "EdAsher",
   "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@google-cloud/firestore": "^7.5.0",
     "cors": "^2.8.6",
