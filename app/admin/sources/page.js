@@ -37,6 +37,22 @@ async function fetchSources(params = {}) {
   return data;
 }
 
+async function postAction(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok || data?.ok === false) {
+    throw new Error(data?.error || `Request failed: ${res.status}`);
+  }
+
+  return data;
+}
+
 function safeText(value, fallback = "-") {
   if (value === undefined || value === null || value === "") return fallback;
   return String(value);
@@ -89,7 +105,7 @@ function HealthPill({ status }) {
   );
 }
 
-function SourcesTable({ title, rows, type }) {
+function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
   return (
     <div className="rounded-3xl border border-white/10 bg-zinc-900/70 p-5 backdrop-blur">
       <div className="mb-4 flex items-center justify-between">
@@ -111,12 +127,13 @@ function SourcesTable({ title, rows, type }) {
               <th className="px-3 py-3 font-medium">Reputation</th>
               <th className="px-3 py-3 font-medium">Trial</th>
               <th className="px-3 py-3 font-medium">Updated</th>
+              <th className="px-3 py-3 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-zinc-500">
+                <td colSpan={11} className="px-3 py-6 text-center text-zinc-500">
                   No records found.
                 </td>
               </tr>
@@ -128,15 +145,15 @@ function SourcesTable({ title, rows, type }) {
                   row.trial_status ||
                   "-";
 
+                const sourceId = row.source_id || row.candidate_id || row.id;
+
                 return (
                   <tr
-                    key={`${type}-${row.id || row.source_id || row.candidate_id}`}
+                    key={`${type}-${sourceId}`}
                     className="border-b border-white/5 align-top"
                   >
                     <td className="px-3 py-3 text-white">
-                      <div className="font-medium">
-                        {safeText(row.source_id || row.candidate_id || row.id)}
-                      </div>
+                      <div className="font-medium">{safeText(sourceId)}</div>
                       <div className="mt-1 text-xs text-zinc-500">
                         {safeText(row.source_kind)}
                       </div>
@@ -210,6 +227,26 @@ function SourcesTable({ title, rows, type }) {
                     <td className="px-3 py-3 text-zinc-400">
                       {formatDateLike(row.updated_at || row.updated_at_iso)}
                     </td>
+
+                    <td className="px-3 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        <AdminActionButton
+                          label="Recheck"
+                          tone="cyan"
+                          onClick={() => onRecheck(sourceId)}
+                        />
+                        <AdminActionButton
+                          label="Disable"
+                          tone="pink"
+                          onClick={() => onDisable(sourceId)}
+                        />
+                        <AdminActionButton
+                          label="Enable"
+                          tone="emerald"
+                          onClick={() => onEnable(sourceId)}
+                        />
+                      </div>
+                    </td>
                   </tr>
                 );
               })
@@ -224,6 +261,7 @@ function SourcesTable({ title, rows, type }) {
 export default function SourcesPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [loadingAction, setLoadingAction] = useState(false);
   const [filters, setFilters] = useState({
     country: "TH",
     category: "beauty_skincare",
@@ -231,10 +269,10 @@ export default function SourcesPage() {
     limit: 100
   });
 
-  async function load() {
+  async function load(activeFilters = filters) {
     try {
       setError("");
-      const result = await fetchSources(filters);
+      const result = await fetchSources(activeFilters);
       setData(result);
     } catch (err) {
       setError(err.message || String(err));
@@ -245,6 +283,51 @@ export default function SourcesPage() {
     load();
   }, []);
 
+  async function handleRecheck(sourceId) {
+    try {
+      setLoadingAction(true);
+      setError("");
+      await postAction("/admin/sources/recheck", {
+        source_id: sourceId
+      });
+      await load();
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setLoadingAction(false);
+    }
+  }
+
+  async function handleDisable(sourceId) {
+    try {
+      setLoadingAction(true);
+      setError("");
+      await postAction("/admin/sources/disable", {
+        source_id: sourceId
+      });
+      await load();
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setLoadingAction(false);
+    }
+  }
+
+  async function handleEnable(sourceId) {
+    try {
+      setLoadingAction(true);
+      setError("");
+      await postAction("/admin/sources/enable", {
+        source_id: sourceId
+      });
+      await load();
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setLoadingAction(false);
+    }
+  }
+
   const summary = data?.summary || {};
 
   const aiSources = useMemo(() => data?.ai_sources || [], [data]);
@@ -254,7 +337,7 @@ export default function SourcesPage() {
     <AdminShell>
       <AdminPageHeader
         title="Sources Intelligence"
-        subtitle="Monitor AI discovery sources, candidate pipelines, trial outcomes, reputation, promotion status, and health."
+        subtitle="Monitor AI discovery sources, candidate pipelines, trial outcomes, reputation, promotion status, health, and manual controls."
       />
 
       {error ? (
@@ -272,7 +355,12 @@ export default function SourcesPage() {
       </div>
 
       <AdminSurface className="mb-8">
-        <div className="mb-4 text-xs uppercase text-zinc-500">Filters</div>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-xs uppercase text-zinc-500">Filters</div>
+          {loadingAction ? (
+            <div className="text-xs text-cyan-300">Updating source...</div>
+          ) : null}
+        </div>
 
         <div className="grid gap-4 md:grid-cols-4">
           <input className="input" placeholder="Country" />
@@ -282,18 +370,32 @@ export default function SourcesPage() {
         </div>
 
         <div className="mt-4 flex gap-3">
-          <AdminActionButton label="Refresh" tone="orange" onClick={load} />
+          <AdminActionButton label="Refresh" tone="orange" onClick={() => load()} />
           <AdminActionButton label="Reset" />
         </div>
       </AdminSurface>
 
       <div className="mb-8 space-y-6">
         <AdminSurface>
-          <SourcesTable title="AI Sources" rows={aiSources} type="ai" />
+          <SourcesTable
+            title="AI Sources"
+            rows={aiSources}
+            type="ai"
+            onRecheck={handleRecheck}
+            onDisable={handleDisable}
+            onEnable={handleEnable}
+          />
         </AdminSurface>
 
         <AdminSurface>
-          <SourcesTable title="Candidates" rows={candidates} type="candidate" />
+          <SourcesTable
+            title="Candidates"
+            rows={candidates}
+            type="candidate"
+            onRecheck={handleRecheck}
+            onDisable={handleDisable}
+            onEnable={handleEnable}
+          />
         </AdminSurface>
       </div>
     </AdminShell>
