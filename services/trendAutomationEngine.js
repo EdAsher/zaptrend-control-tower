@@ -2,6 +2,7 @@ const { db, FieldValue } = require("../config/firestore");
 const { env } = require("../config/env");
 const { runSourceSignalScan } = require("./sourceSignalScanEngine");
 const { runTrendScoring } = require("./trendScoringEngine");
+const { runSourceHealthCheck } = require("./sourceHealthEngine");
 
 function buildRunId(prefix = "autorun") {
   const stamp = Date.now();
@@ -45,6 +46,12 @@ async function runFullTrendCycle({
   });
 
   try {
+// 🔥 STEP 0 — HEALTH CHECK
+await runSourceHealthCheck({
+  country: normalizedCountry,
+  category: normalizedCategory,
+  limit: 50
+});
     const sourceScanResult = await runSourceSignalScan({
       country: normalizedCountry,
       category: normalizedCategory

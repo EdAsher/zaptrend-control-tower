@@ -15,6 +15,7 @@ const adminSignalScanRoutes = require("./routes/adminSignalScan");
 const adminTrendScoringRoutes = require("./routes/adminTrendScoring");
 const adminTrendFeedRoutes = require("./routes/adminTrendFeed");
 const adminTrendAutomationRoutes = require("./routes/adminTrendAutomation");
+const adminSourceHealthRoutes = require("./routes/adminSourceHealth");
 
 const app = express();
 
@@ -37,6 +38,7 @@ app.use("/admin", adminSignalScanRoutes);
 app.use("/admin", adminTrendScoringRoutes);
 app.use("/admin", adminTrendFeedRoutes);
 app.use("/admin", adminTrendAutomationRoutes);
+app.use("/admin", adminSourceHealthRoutes);
 
 const PORT = process.env.PORT || 8080;
 
