@@ -14,6 +14,7 @@ const DEFAULT_FILTERS = {
   country: "TH",
   category: "beauty_skincare",
   status: "",
+  sourceMix: "all",
   limit: 20
 };
 
@@ -54,6 +55,44 @@ function formatDateTime(value) {
   }
 }
 
+function getSourceTypeSet(sourceTypes = []) {
+  return new Set((sourceTypes || []).map((x) => String(x || "").trim().toLowerCase()));
+}
+
+function getSignalMix(item) {
+  const set = getSourceTypeSet(item.source_types || []);
+  const hasStable = set.has("source_scan");
+  const hasSocial = set.has("social_signal");
+
+  if (hasStable && hasSocial) return "dual";
+  if (hasStable) return "stable";
+  if (hasSocial) return "social";
+  return "unknown";
+}
+
+function getSignalMixLabel(item) {
+  const mix = getSignalMix(item);
+  if (mix === "dual") return "Dual Confirmed";
+  if (mix === "stable") return "Stable Only";
+  if (mix === "social") return "Social Only";
+  return "Unknown Mix";
+}
+
+function getConfidenceLabel(item) {
+  const mix = getSignalMix(item);
+  const mentions = Number(item.total_mentions || 0);
+  const cumulative = Number(item.cumulative_score || 0);
+
+  if (mix === "dual" && mentions >= 20 && cumulative >= 500) return "High Confidence";
+  if (mix === "social" && mentions < 10) return "Early Signal";
+  return "Validated";
+}
+
+function matchesSourceMix(item, sourceMix) {
+  if (!sourceMix || sourceMix === "all") return true;
+  return getSignalMix(item) === sourceMix;
+}
+
 function TrendStatusPill({ value }) {
   const text = safeText(value, "UNKNOWN").toUpperCase();
   const styles =
@@ -90,6 +129,42 @@ function RunStatusPill({ value }) {
   );
 }
 
+function SignalMixPill({ item }) {
+  const mix = getSignalMix(item);
+
+  const styles =
+    mix === "dual"
+      ? "bg-emerald-500/20 text-emerald-200 border-emerald-400/30"
+      : mix === "stable"
+      ? "bg-cyan-500/20 text-cyan-200 border-cyan-400/30"
+      : mix === "social"
+      ? "bg-fuchsia-500/20 text-fuchsia-200 border-fuchsia-400/30"
+      : "bg-zinc-500/20 text-zinc-200 border-zinc-400/20";
+
+  return (
+    <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${styles}`}>
+      {getSignalMixLabel(item)}
+    </span>
+  );
+}
+
+function ConfidencePill({ item }) {
+  const label = getConfidenceLabel(item);
+
+  const styles =
+    label === "High Confidence"
+      ? "bg-emerald-500/20 text-emerald-200 border-emerald-400/30"
+      : label === "Early Signal"
+      ? "bg-amber-500/20 text-amber-200 border-amber-400/30"
+      : "bg-cyan-500/20 text-cyan-200 border-cyan-400/30";
+
+  return (
+    <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${styles}`}>
+      {label}
+    </span>
+  );
+}
+
 function FieldInput({ label, value, onChange, placeholder, type = "text" }) {
   return (
     <label className="block">
@@ -103,6 +178,27 @@ function FieldInput({ label, value, onChange, placeholder, type = "text" }) {
         onChange={onChange}
         className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-400/40 focus:bg-black/30"
       />
+    </label>
+  );
+}
+
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <label className="block">
+      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-zinc-500">
+        {label}
+      </div>
+      <select
+        value={value}
+        onChange={onChange}
+        className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/40 focus:bg-black/30"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value} className="bg-zinc-900">
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -124,6 +220,11 @@ function TrendCard({ item, rank }) {
           </div>
         </div>
         <TrendStatusPill value={item.trend_status} />
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <SignalMixPill item={item} />
+        <ConfidencePill item={item} />
       </div>
 
       <div className="mt-5 grid gap-4 md:grid-cols-4">
@@ -190,6 +291,10 @@ function TrendCard({ item, rank }) {
 }
 
 function RunCard({ run }) {
+  const generatedCount =
+    run.generated_count ??
+    (Array.isArray(run.trend_output_ids) ? run.trend_output_ids.length : 0);
+
   return (
     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -219,7 +324,7 @@ function RunCard({ run }) {
             Generated
           </div>
           <div className="mt-1 text-lg font-semibold text-white">
-            {safeText(run.generated_count, "0")}
+            {safeText(generatedCount, "0")}
           </div>
         </div>
       </div>
@@ -288,15 +393,19 @@ export default function TrendsPage() {
     load(DEFAULT_FILTERS);
   }, [load]);
 
+  const filteredOutputs = useMemo(() => {
+    return outputs.filter((item) => matchesSourceMix(item, filters.sourceMix));
+  }, [outputs, filters.sourceMix]);
+
   const summary = useMemo(() => {
     return {
-      total: outputs.length,
-      hot: outputs.filter((x) => String(x.trend_status).toUpperCase() === "HOT").length,
-      trending: outputs.filter((x) => String(x.trend_status).toUpperCase() === "TRENDING").length,
-      watchlist: outputs.filter((x) => String(x.trend_status).toUpperCase() === "WATCHLIST").length,
+      total: filteredOutputs.length,
+      hot: filteredOutputs.filter((x) => String(x.trend_status).toUpperCase() === "HOT").length,
+      trending: filteredOutputs.filter((x) => String(x.trend_status).toUpperCase() === "TRENDING").length,
+      watchlist: filteredOutputs.filter((x) => String(x.trend_status).toUpperCase() === "WATCHLIST").length,
       runs: runs.length
     };
-  }, [outputs, runs]);
+  }, [filteredOutputs, runs]);
 
   function updateFilter(key, value) {
     setFilters((prev) => ({
@@ -315,45 +424,43 @@ export default function TrendsPage() {
   }
 
   async function handleRunAutomation() {
-  try {
-    setRunningAutomation(true);
-    setAutomationMessage("");
-    setError("");
+    try {
+      setRunningAutomation(true);
+      setAutomationMessage("");
+      setError("");
 
-    const payload = {
-      country: filters.country,
-      category: filters.category,
-      scoreLimit: Number(filters.limit) || 20
-    };
+      const payload = {
+        country: filters.country,
+        category: filters.category,
+        scoreLimit: Number(filters.limit) || 20
+      };
 
-    const result = await fetchJson("/admin/trends/run-full-cycle", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
+      const result = await fetchJson("/admin/trends/run-full-cycle", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
 
-    if (result?.ok === false) {
-      throw new Error(result.error || "Automation failed");
+      if (result?.ok === false) {
+        throw new Error(result.error || "Automation failed");
+      }
+
+      setAutomationMessage(
+        "Trend generation completed successfully. Refreshing data..."
+      );
+
+      await load(filters);
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      setRunningAutomation(false);
     }
-
-    setAutomationMessage(
-      "Trend generation completed successfully. Refreshing data..."
-    );
-
-    // 🔥 Reload new outputs + runs
-    await load(filters);
-
-  } catch (err) {
-    setError(err.message || String(err));
-  } finally {
-    setRunningAutomation(false);
   }
-}
 
   return (
     <AdminShell>
       <AdminPageHeader
         title="Trend Intelligence"
-        subtitle="Ranked trend outputs generated from signal memory, source scans, and cumulative scoring."
+        subtitle="Ranked trend outputs generated from signal memory, source scans, social signals, and cumulative scoring."
       />
 
       {error ? (
@@ -388,7 +495,7 @@ export default function TrendsPage() {
           ) : null}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-5">
           <FieldInput
             label="Country"
             value={filters.country}
@@ -406,6 +513,17 @@ export default function TrendsPage() {
             value={filters.status}
             placeholder="HOT / TRENDING / WATCHLIST"
             onChange={(e) => updateFilter("status", e.target.value)}
+          />
+          <SelectField
+            label="Source Mix"
+            value={filters.sourceMix}
+            onChange={(e) => updateFilter("sourceMix", e.target.value)}
+            options={[
+              { value: "all", label: "All Mixes" },
+              { value: "stable", label: "Stable Only" },
+              { value: "social", label: "Social Only" },
+              { value: "dual", label: "Dual Confirmed" }
+            ]}
           />
           <FieldInput
             label="Limit"
@@ -436,12 +554,12 @@ export default function TrendsPage() {
 
       <div className="mb-8 grid gap-6 xl:grid-cols-[1.7fr_1fr]">
         <div className="space-y-6">
-          {loading && outputs.length === 0 ? (
+          {loading && filteredOutputs.length === 0 ? (
             <AdminSurface>Loading trend outputs...</AdminSurface>
-          ) : outputs.length === 0 ? (
+          ) : filteredOutputs.length === 0 ? (
             <AdminSurface>No trend outputs found.</AdminSurface>
           ) : (
-            outputs.map((item, i) => (
+            filteredOutputs.map((item, i) => (
               <AdminSurface key={item.id || `${item.brand}-${item.product}-${i}`} hover glow="cyan">
                 <TrendCard item={item} rank={i + 1} />
               </AdminSurface>

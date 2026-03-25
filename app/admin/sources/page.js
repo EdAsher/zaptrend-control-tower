@@ -122,9 +122,7 @@ function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
     syncWidths();
     window.addEventListener("resize", syncWidths);
 
-    return () => {
-      window.removeEventListener("resize", syncWidths);
-    };
+    return () => window.removeEventListener("resize", syncWidths);
   }, [rows]);
 
   function handleTopScroll(e) {
@@ -146,7 +144,6 @@ function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
         <Pill>{rows.length} rows</Pill>
       </div>
 
-      {/* TOP SCROLLBAR */}
       <div
         ref={topScrollRef}
         onScroll={handleTopScroll}
@@ -155,7 +152,6 @@ function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
         <div ref={topInnerRef} className="h-3" />
       </div>
 
-      {/* TABLE */}
       <div
         ref={bottomScrollRef}
         onScroll={handleBottomScroll}
@@ -238,21 +234,12 @@ function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
                       </div>
                     </td>
 
-                    <td className="px-3 py-3">
-                      {safeText(row.quality_score, "0")}
-                    </td>
-
+                    <td className="px-3 py-3">{safeText(row.quality_score, "0")}</td>
                     <td className="px-3 py-3">
                       {safeText(row.source_reputation_score, "0")}
                     </td>
-
-                    <td className="px-3 py-3">
-                      {safeText(row.trial_status)}
-                    </td>
-
-                    <td className="px-3 py-3">
-                      {formatDateLike(row.updated_at_iso)}
-                    </td>
+                    <td className="px-3 py-3">{safeText(row.trial_status)}</td>
+                    <td className="px-3 py-3">{formatDateLike(row.updated_at_iso)}</td>
 
                     <td className="px-3 py-3">
                       <div className="flex gap-2 flex-wrap">
@@ -312,6 +299,7 @@ export default function SourcesPage() {
   async function handleRecheck(id, kind, country, category) {
     try {
       setLoadingAction(true);
+      setError("");
       await postAction("/admin/sources/recheck", {
         source_id: id,
         source_kind: kind,
@@ -319,6 +307,8 @@ export default function SourcesPage() {
         category
       });
       await load();
+    } catch (err) {
+      setError(err.message || String(err));
     } finally {
       setLoadingAction(false);
     }
@@ -327,11 +317,14 @@ export default function SourcesPage() {
   async function handleDisable(id, kind) {
     try {
       setLoadingAction(true);
+      setError("");
       await postAction("/admin/sources/disable", {
         source_id: id,
         source_kind: kind
       });
       await load();
+    } catch (err) {
+      setError(err.message || String(err));
     } finally {
       setLoadingAction(false);
     }
@@ -340,54 +333,178 @@ export default function SourcesPage() {
   async function handleEnable(id, kind) {
     try {
       setLoadingAction(true);
+      setError("");
       await postAction("/admin/sources/enable", {
         source_id: id,
         source_kind: kind
       });
       await load();
+    } catch (err) {
+      setError(err.message || String(err));
     } finally {
       setLoadingAction(false);
     }
   }
 
-  const aiSources = useMemo(() => data?.ai_sources || [], [data]);
-  const candidates = useMemo(() => data?.candidates || [], [data]);
-
+  const allAiSources = useMemo(() => data?.ai_sources || [], [data]);
+  const allCandidates = useMemo(() => data?.candidates || [], [data]);
   const summary = data?.summary || {};
+
+  const activeAiSources = useMemo(
+    () =>
+      allAiSources.filter(
+        (row) =>
+          row.is_active === true &&
+          row.auto_disabled !== true &&
+          String(row.health_status || "").toLowerCase() !== "dead"
+      ),
+    [allAiSources]
+  );
+
+  const deadOrDisabledAiSources = useMemo(
+    () =>
+      allAiSources.filter(
+        (row) =>
+          row.is_active === false ||
+          row.auto_disabled === true ||
+          ["dead", "disabled"].includes(String(row.health_status || "").toLowerCase())
+      ),
+    [allAiSources]
+  );
+
+  const pendingCandidates = useMemo(
+    () =>
+      allCandidates.filter(
+        (row) => String(row.trial_status || "").toUpperCase() !== "TRIAL_REJECTED"
+      ),
+    [allCandidates]
+  );
+
+  const rejectedCandidates = useMemo(
+    () =>
+      allCandidates.filter(
+        (row) => String(row.trial_status || "").toUpperCase() === "TRIAL_REJECTED"
+      ),
+    [allCandidates]
+  );
 
   return (
     <AdminShell>
-      <AdminPageHeader title="Sources Intelligence" />
+      <AdminPageHeader
+        title="Sources Intelligence"
+        subtitle="Separate intake candidates from curated AI sources, while preserving dead and disabled registry history."
+      />
 
-      {error && <div className="text-rose-400 mb-4">{error}</div>}
+      {error ? (
+        <div className="mb-6 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
+          {error}
+        </div>
+      ) : null}
 
-      <div className="grid grid-cols-5 gap-4 mb-6">
-        <AdminMetricCard title="Active Sources" value={summary.active_ai_sources} />
+      <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <AdminMetricCard title="Active Sources" value={summary.active_ai_sources} accent="emerald" />
         <AdminMetricCard title="Candidates" value={summary.candidate_sources} />
-        <AdminMetricCard title="Promoted" value={summary.promoted_candidates} />
-        <AdminMetricCard title="Approved" value={summary.trial_approved} />
-        <AdminMetricCard title="Rejected" value={summary.trial_rejected} />
+        <AdminMetricCard title="Promoted" value={summary.promoted_candidates} accent="cyan" />
+        <AdminMetricCard title="Approved" value={summary.trial_approved} accent="emerald" />
+        <AdminMetricCard title="Rejected" value={summary.trial_rejected} accent="rose" />
       </div>
 
-      <SourcesTable
-        title="AI Sources"
-        rows={aiSources}
-        type="ai"
-        onRecheck={handleRecheck}
-        onDisable={handleDisable}
-        onEnable={handleEnable}
-      />
+      <AdminSurface className="mb-8">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-xs uppercase text-zinc-500">Lifecycle Summary</div>
+          {loadingAction ? (
+            <div className="text-xs text-cyan-300">Updating source...</div>
+          ) : null}
+        </div>
 
-      <div className="mt-6" />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
+              Active AI Sources
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-white">
+              {activeAiSources.length}
+            </div>
+          </div>
 
-      <SourcesTable
-        title="Candidates"
-        rows={candidates}
-        type="candidate"
-        onRecheck={handleRecheck}
-        onDisable={handleDisable}
-        onEnable={handleEnable}
-      />
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
+              Dead / Disabled AI Sources
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-white">
+              {deadOrDisabledAiSources.length}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
+              Pending / Trialing Candidates
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-white">
+              {pendingCandidates.length}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
+              Rejected Candidates
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-white">
+              {rejectedCandidates.length}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex gap-3">
+          <AdminActionButton label="Refresh" tone="orange" onClick={() => load()} />
+        </div>
+      </AdminSurface>
+
+      <div className="mb-8 space-y-6">
+        <AdminSurface>
+          <SourcesTable
+            title="Active AI Sources"
+            rows={activeAiSources}
+            type="active-ai"
+            onRecheck={handleRecheck}
+            onDisable={handleDisable}
+            onEnable={handleEnable}
+          />
+        </AdminSurface>
+
+        <AdminSurface>
+          <SourcesTable
+            title="Dead / Disabled AI Sources"
+            rows={deadOrDisabledAiSources}
+            type="dead-ai"
+            onRecheck={handleRecheck}
+            onDisable={handleDisable}
+            onEnable={handleEnable}
+          />
+        </AdminSurface>
+
+        <AdminSurface>
+          <SourcesTable
+            title="Pending / Trialing Candidates"
+            rows={pendingCandidates}
+            type="pending-candidates"
+            onRecheck={handleRecheck}
+            onDisable={handleDisable}
+            onEnable={handleEnable}
+          />
+        </AdminSurface>
+
+        <AdminSurface>
+          <SourcesTable
+            title="Rejected Candidates"
+            rows={rejectedCandidates}
+            type="rejected-candidates"
+            onRecheck={handleRecheck}
+            onDisable={handleDisable}
+            onEnable={handleEnable}
+          />
+        </AdminSurface>
+      </div>
     </AdminShell>
   );
 }
