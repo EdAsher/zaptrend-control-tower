@@ -6,7 +6,7 @@ import AdminSurface from "../../../components/admin/AdminSurface";
 import AdminMetricCard from "../../../components/admin/AdminMetricCard";
 import AdminActionButton from "../../../components/admin/AdminActionButton";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE =
   (process.env.NEXT_PUBLIC_ZAPTREND_API_BASE || "").replace(/\/$/, "");
@@ -109,6 +109,36 @@ function HealthPill({ status }) {
 
 // ================= TABLE =================
 function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
+  const topScrollRef = useRef(null);
+  const bottomScrollRef = useRef(null);
+  const topInnerRef = useRef(null);
+
+  useEffect(() => {
+    function syncWidths() {
+      if (!bottomScrollRef.current || !topInnerRef.current) return;
+      topInnerRef.current.style.width = `${bottomScrollRef.current.scrollWidth}px`;
+    }
+
+    syncWidths();
+    window.addEventListener("resize", syncWidths);
+
+    return () => {
+      window.removeEventListener("resize", syncWidths);
+    };
+  }, [rows]);
+
+  function handleTopScroll(e) {
+    if (bottomScrollRef.current) {
+      bottomScrollRef.current.scrollLeft = e.target.scrollLeft;
+    }
+  }
+
+  function handleBottomScroll(e) {
+    if (topScrollRef.current) {
+      topScrollRef.current.scrollLeft = e.target.scrollLeft;
+    }
+  }
+
   return (
     <div className="rounded-3xl border border-white/10 bg-zinc-900/70 p-5 backdrop-blur">
       <div className="mb-4 flex items-center justify-between">
@@ -116,7 +146,21 @@ function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
         <Pill>{rows.length} rows</Pill>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* TOP SCROLLBAR */}
+      <div
+        ref={topScrollRef}
+        onScroll={handleTopScroll}
+        className="mb-3 overflow-x-auto overflow-y-hidden"
+      >
+        <div ref={topInnerRef} className="h-3" />
+      </div>
+
+      {/* TABLE */}
+      <div
+        ref={bottomScrollRef}
+        onScroll={handleBottomScroll}
+        className="overflow-x-auto"
+      >
         <table className="min-w-full text-left text-sm">
           <thead className="text-zinc-400">
             <tr className="border-b border-white/10">
@@ -163,6 +207,7 @@ function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
                         <a
                           href={row.url}
                           target="_blank"
+                          rel="noreferrer"
                           className="text-xs text-orange-300 hover:underline"
                         >
                           Open
@@ -173,7 +218,24 @@ function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
                     <td className="px-3 py-3">{safeText(row.status)}</td>
 
                     <td className="px-3 py-3">
-                      <HealthPill status={row.health_status} />
+                      <div className="flex flex-col gap-1">
+                        <HealthPill status={row.health_status} />
+                        {row.health_http_status ? (
+                          <span className="text-[10px] text-zinc-500">
+                            HTTP {row.health_http_status}
+                          </span>
+                        ) : null}
+                        {Number(row.health_fail_count || 0) > 0 ? (
+                          <span className="text-[10px] text-rose-300">
+                            fails: {row.health_fail_count}
+                          </span>
+                        ) : null}
+                        {row.auto_disabled ? (
+                          <span className="text-[10px] text-amber-300">
+                            auto-disabled
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
 
                     <td className="px-3 py-3">
