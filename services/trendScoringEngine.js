@@ -59,6 +59,7 @@ function computeSourceTypeScore(sourceTypes = []) {
   let score = 0;
   if (set.has("manual_seed")) score += 5;
   if (set.has("source_scan")) score += 15;
+if (set.has("social_signal")) score += 20; // 🔥 NEW
 
   return score;
 }

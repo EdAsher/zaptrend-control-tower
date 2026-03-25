@@ -255,6 +255,23 @@ async function runSocialScan({ country, category }) {
     sources
   });
 
+const { ingestSignals } = require("./signalMemoryEngine");
+
+await ingestSignals({
+  country: normalizedCountry,
+  category: normalizedCategory,
+  sourceType: "social_signal", // 🔥 IMPORTANT
+  signals: mentions.map((m) => ({
+    brand: m.brand,
+    product: m.product,
+    hashtag: m.hashtag,
+    source_weight: 1.2,        // 🔥 stronger than source scan
+    engagement: 2,
+    freshness_boost: 1.5,
+    source_ref: m.discovered_from || "social"
+  }))
+});
+
   const signalScoreSummary = buildSignalScoreSummary(mentions);
 
   const discoveryGuidance = buildDiscoveryGuidance({
