@@ -334,29 +334,74 @@ async function runDiscoveryBoost({
   const normalizedTheme = String(theme || DEFAULTS.THEME).trim();
   const normalizedLimit = Number(limit || env.ZAPTREND_DISCOVERY_LIMIT || 0);
 
-  console.log("[SOCIAL SIGNAL ENGINE] runDiscoveryBoost", {
+  console.log("[DISCOVERY BOOST] start", {
     country: normalizedCountry,
     category: normalizedCategory,
-    theme: normalizedTheme,
-    limit: normalizedLimit,
-    dryRun
+    limit: normalizedLimit
   });
 
-  const candidates = Array.from({ length: normalizedLimit }).map((_, index) => ({
-    candidate_id: buildRunId("candidate"),
-    rank: index + 1,
-    country: normalizedCountry,
-    category: normalizedCategory,
-    theme: normalizedTheme,
-    source_type: "social-derived",
-    status: dryRun ? STATUSES.DRY_RUN : STATUSES.CANDIDATE,
-    domain: `example-${index + 1}.${normalizedCountry.toLowerCase()}.trend`,
-    quality_score: Math.max(60, 90 - index * 5),
-    reputation_score: 0,
-    trial_runs_remaining: 3,
-    fail_count: 0,
-    success_count: 0
-  }));
+  // 🔥 REALISTIC curated fallback URLs (replace later with real AI discovery)
+  const seedSources = [
+    { url: "https://konvy.com/", domain: "konvy.com" },
+    { url: "https://looksi.com/", domain: "looksi.com" },
+    { url: "https://madamefin.com/", domain: "madamefin.com" },
+    { url: "https://peachy.co.th/", domain: "peachy.co.th" },
+    { url: "https://sudsapda.com/", domain: "sudsapda.com" },
+    { url: "https://vanillamagazine.com/", domain: "vanillamagazine.com" }
+  ];
+
+  // 🔥 Load existing AI sources to prevent duplicates
+  const aiSnap = await db.collection(COLLECTIONS.AI_SOURCES).get();
+  const existingDomains = new Set(
+    aiSnap.docs.map(d => (d.data().domain || "").toLowerCase())
+  );
+
+  // 🔥 Load candidates to prevent duplicates
+  const candidateSnap = await db.collection(COLLECTIONS.SOURCE_DISCOVERY_CANDIDATES).get();
+  const existingCandidates = new Set(
+    candidateSnap.docs.map(d => (d.data().domain || "").toLowerCase())
+  );
+
+  const candidates = [];
+
+  for (const source of seedSources) {
+    const url = source.url;
+    const domain = source.domain;
+
+    if (!url || !url.startsWith("http")) continue;
+    if (!domain) continue;
+
+    // 🔥 Skip duplicates
+    if (existingDomains.has(domain)) continue;
+    if (existingCandidates.has(domain)) continue;
+
+    candidates.push({
+      candidate_id: buildRunId("candidate"),
+      country: normalizedCountry,
+      category: normalizedCategory,
+      theme: normalizedTheme,
+
+      url,
+      domain,
+
+      source_type: "curated_seed",
+
+      status: dryRun ? STATUSES.DRY_RUN : STATUSES.CANDIDATE,
+
+      quality_score: 85,
+      reputation_score: 10,
+
+      trial_runs_remaining: 3,
+      fail_count: 0,
+      success_count: 0,
+
+      health_status: "unknown",
+      is_active: true,
+      auto_disabled: false
+    });
+  }
+
+  const finalCandidates = candidates.slice(0, normalizedLimit);
 
   const discoveryRunId = await persistDiscoveryRun({
     runId: null,
@@ -365,20 +410,15 @@ async function runDiscoveryBoost({
     theme: normalizedTheme,
     limit: normalizedLimit,
     dryRun,
-    candidates
+    candidates: finalCandidates
   });
 
   return {
     ok: true,
-    message: "Discovery boost completed",
+    message: "Discovery boost completed (clean)",
     discovery_run_id: discoveryRunId,
-    country: normalizedCountry,
-    category: normalizedCategory,
-    theme: normalizedTheme,
-    limit: normalizedLimit,
-    dry_run: dryRun,
-    candidates_created: candidates.length,
-    candidates
+    candidates_created: finalCandidates.length,
+    candidates: finalCandidates
   };
 }
 
