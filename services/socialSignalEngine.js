@@ -326,15 +326,28 @@ async function runDiscoveryBoost({
   });
 
   // Curated seeds for now; later this can be replaced by real AI-generated discovery inputs.
-  const seedSources = [
-    { url: "https://www.beauticool.com", domain: "beauticool.com", source_type: "curated_seed", quality_score: 85, reputation_score: 10 },
-    { url: "https://www.siwilai.com", domain: "siwilai.com", source_type: "curated_seed", quality_score: 85, reputation_score: 10 },
-    { url: "https://www.pantip.com", domain: "pantip.com", source_type: "curated_seed", quality_score: 80, reputation_score: 10 },
-    { url: "https://www.thaibev.com/en/beauty-wellness", domain: "thaibev.com", source_type: "curated_seed", quality_score: 82, reputation_score: 10 },
-    { url: "https://www.beautrium.com", domain: "beautrium.com", source_type: "curated_seed", quality_score: 86, reputation_score: 10 },
-    { url: "https://www.cosmenet.in.th", domain: "cosmenet.in.th", source_type: "curated_seed", quality_score: 84, reputation_score: 10 },
-    { url: "https://jeban.com", domain: "jeban.com", source_type: "curated_seed", quality_score: 84, reputation_score: 10 }
-  ];
+const seedSources = [
+  { url: "https://www.beauticool.com" },
+  { url: "https://www.karmarts.com" },
+  { url: "https://www.eveandboy.com" },
+  { url: "https://www.lazada.co.th" },
+  { url: "https://shopee.co.th" },
+  { url: "https://www.central.co.th" },
+  { url: "https://www.robinson.co.th" },
+  { url: "https://www.watsons.co.th" },
+  { url: "https://www.boots.co.th" },
+  { url: "https://www.konvy.com" },
+  { url: "https://www.looksi.com" },
+  { url: "https://www.siwilai.com" },
+  { url: "https://pantip.com" },
+  { url: "https://www.jeban.com" },
+  { url: "https://www.cosmenet.in.th" },
+  { url: "https://www.beautrium.com" },
+  { url: "https://www.konvy.com/blog" },
+  { url: "https://www.sudsapda.com" },
+  { url: "https://www.thairath.co.th/women" },
+  { url: "https://www.sanook.com/women" }
+];
 
   const discoveryResult = await createDiscoveryCandidates({
     country: normalizedCountry,
