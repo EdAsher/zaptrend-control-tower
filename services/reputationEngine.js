@@ -36,13 +36,49 @@ function calculateReputation(candidate) {
   const successCount = Number(candidate.success_count || 0);
   const failCount = Number(candidate.fail_count || 0);
 
-  const reputation =
-    qualityScore * 0.4 +
-    trialScore * 0.4 +
-    successCount * 8 -
-    failCount * 6;
+  const healthStatus = String(candidate.health_status || "").toLowerCase();
+  const trialStatus = String(candidate.trial_status || "").toUpperCase();
+  const promotionStatus = String(candidate.promotion_status || "").toUpperCase();
 
-  return Math.max(0, Math.min(100, Math.round(reputation)));
+  // 🔥 BASE
+  let score =
+    qualityScore * 0.3 +
+    trialScore * 0.3;
+
+  // 🔥 HEALTH IMPACT
+  if (healthStatus === "healthy") score += 10;
+  else if (healthStatus === "warning") score -= 10;
+  else if (healthStatus === "dead" || healthStatus === "disabled") score -= 25;
+
+  // 🔥 TRIAL IMPACT
+  if (trialStatus === "TRIAL_APPROVED") score += 15;
+  else if (trialStatus === "TRIAL_REJECTED") score -= 15;
+
+  // 🔥 PROMOTION IMPACT
+  if (promotionStatus === "PROMOTED") score += 20;
+
+  // 🔥 LEARNING MEMORY
+  score += successCount * 5;
+  score -= failCount * 5;
+
+  // 🔥 STALE DECAY
+  const lastUpdated = candidate.updated_at || candidate.created_at;
+  if (lastUpdated) {
+    const now = Date.now();
+    const lastMs = getTimestampMillis(lastUpdated);
+
+    if (lastMs > 0) {
+      const days = (now - lastMs) / (1000 * 60 * 60 * 24);
+
+      if (days > 30) {
+        score -= 10;
+      } else if (days > 14) {
+        score -= 5;
+      }
+    }
+  }
+
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 function pickBestReputationCandidates(candidates, limit) {
@@ -104,7 +140,9 @@ async function runReputationRecalculation({ country, category, limit = 20 }) {
       new_reputation_score: reputationScore,
       trial_status: candidate.trial_status || null,
       quality_score: Number(candidate.quality_score || 0),
-      trial_score: Number(candidate.trial_score || 0)
+      trial_score: Number(candidate.trial_score || 0),
+      health_status: candidate.health_status || null,
+      promotion_status: candidate.promotion_status || null
     };
   });
 
