@@ -25,6 +25,10 @@ function normalizeUrl(value) {
   return String(value || "").trim();
 }
 
+function normalizeLanguage(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function isValidHttpUrl(url) {
   try {
     const parsed = new URL(url);
@@ -71,6 +75,124 @@ function countSkipReasons(items = []) {
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
+}
+
+function getCountryLanguageConfig(country) {
+  const cc = normalizeCountry(country);
+
+  const map = {
+    TH: {
+      primary_language: "th",
+      secondary_language: "en",
+      language_instruction:
+        "Generate a mix of Thai-language and English-language sources. Prioritize Thai local websites, Thai beauty media, Thai ecommerce, Thai review/community websites, and Thailand-relevant publishers."
+    },
+    JP: {
+      primary_language: "ja",
+      secondary_language: "en",
+      language_instruction:
+        "Generate a mix of Japanese-language and English-language sources. Prioritize Japan local websites and category-relevant local publishers."
+    },
+    KR: {
+      primary_language: "ko",
+      secondary_language: "en",
+      language_instruction:
+        "Generate a mix of Korean-language and English-language sources. Prioritize Korea local websites and category-relevant local publishers."
+    },
+    TW: {
+      primary_language: "zh-Hant",
+      secondary_language: "en",
+      language_instruction:
+        "Generate a mix of Traditional Chinese and English-language sources. Prioritize Taiwan local websites and category-relevant local publishers."
+    },
+    HK: {
+      primary_language: "zh-Hant",
+      secondary_language: "en",
+      language_instruction:
+        "Generate a mix of Traditional Chinese and English-language sources. Prioritize Hong Kong local websites and category-relevant local publishers."
+    },
+    VN: {
+      primary_language: "vi",
+      secondary_language: "en",
+      language_instruction:
+        "Generate a mix of Vietnamese-language and English-language sources. Prioritize Vietnam local websites and category-relevant local publishers."
+    }
+  };
+
+  return (
+    map[cc] || {
+      primary_language: "en",
+      secondary_language: "en",
+      language_instruction:
+        "Generate category-relevant local and regional websites, preferring country-relevant sources."
+    }
+  );
+}
+
+function getCategoryPromptBlock(category) {
+  const cat = normalizeCategory(category);
+
+  const map = {
+    beauty_skincare: `
+Focus on:
+- beauty ecommerce
+- skincare blogs
+- beauty media/editorial
+- cosmetics review communities
+- women’s lifestyle publishers
+- local beauty retailers
+Avoid:
+- generic unrelated marketplaces
+- low-trust coupon pages
+- unrelated corporate sites
+`,
+    snacks_drinks: `
+Focus on:
+- snack and beverage ecommerce
+- food review blogs
+- local supermarket / grocery ecommerce
+- local food/lifestyle media
+- niche local snack communities
+Avoid:
+- unrelated general shopping pages
+- restaurant-only pages without retail/discovery value
+`,
+    souvenirs_local_finds: `
+Focus on:
+- local gift shops
+- souvenir retailers
+- tourism shopping guides
+- local artisan / handmade marketplaces
+- local lifestyle or travel publishers highlighting unique products
+Avoid:
+- unrelated travel booking sites
+- general news sites without shopping relevance
+`,
+    fashion_accessories: `
+Focus on:
+- local fashion ecommerce
+- accessories retailers
+- fashion/lifestyle editorial
+- trend and shopping blogs
+- niche local brand discovery sites
+Avoid:
+- unrelated department store sections with weak category depth
+`
+  };
+
+  return (
+    map[cat] ||
+    `
+Focus on:
+- category-relevant ecommerce
+- editorial/media
+- community/review sources
+- local or regional niche sites
+Avoid:
+- irrelevant broad domains
+- low-trust or off-category pages
+`
+  );
 }
 
 async function loadExistingDomainState() {
@@ -136,9 +258,13 @@ function buildCandidateDoc({
   theme,
   url,
   domain,
-  sourceType = "curated_seed",
-  qualityScore = 85,
-  reputationScore = 10
+  sourceType = "ai_generated",
+  qualityScore = 80,
+  reputationScore = 10,
+  localityScore = 70,
+  categoryFitScore = 70,
+  language = "en",
+  reason = ""
 }) {
   return {
     candidate_id: buildId("candidate"),
@@ -149,8 +275,15 @@ function buildCandidateDoc({
     domain,
     source_type: sourceType,
     status: STATUSES.CANDIDATE,
+
     quality_score: qualityScore,
     reputation_score: reputationScore,
+    locality_score: localityScore,
+    category_fit_score: categoryFitScore,
+
+    language,
+    discovery_reason: reason,
+
     trial_runs_remaining: 3,
     fail_count: 0,
     success_count: 0,
@@ -158,8 +291,105 @@ function buildCandidateDoc({
     health_reason: "",
     is_active: true,
     auto_disabled: false,
+
     created_at: FieldValue.serverTimestamp(),
     updated_at: FieldValue.serverTimestamp()
+  };
+}
+
+async function generateAiCandidates({
+  country,
+  category,
+  theme,
+  limit
+}) {
+  if (!openai) {
+    return {
+      aiCandidates: [],
+      rawAiText: "",
+      promptUsed: ""
+    };
+  }
+
+  const languageConfig = getCountryLanguageConfig(country);
+  const categoryBlock = getCategoryPromptBlock(category);
+
+  const prompt = `
+You are an expert source discovery engine for local ecommerce, editorial, community, and marketplace websites.
+
+Task:
+Generate ${limit * 3} REAL website candidates for:
+Country: ${country}
+Category: ${category}
+Theme: ${theme}
+
+Language strategy:
+Primary language: ${languageConfig.primary_language}
+Secondary language: ${languageConfig.secondary_language}
+${languageConfig.language_instruction}
+
+Category strategy:
+${categoryBlock}
+
+Rules:
+- Must be REAL websites
+- Must be relevant to the category
+- Prefer local or country-relevant websites
+- Include a healthy mix of:
+  - ecommerce
+  - editorial/media
+  - community/forum/review
+  - niche specialty sites
+- Return only valid http/https URLs
+- Prefer domains/pages with strong local relevance
+- Avoid duplicates if possible
+- Avoid random unrelated corporate sites
+- Avoid obvious junk, parked, or dead sites
+- If the site is likely a broad site, return a category-relevant path when possible
+
+Return JSON ONLY in this exact format:
+[
+  {
+    "url": "https://example.com",
+    "source_type": "editorial",
+    "quality_score": 82,
+    "reputation_score": 12,
+    "locality_score": 88,
+    "category_fit_score": 90,
+    "language": "th",
+    "reason": "Thai beauty editorial site with strong local skincare coverage"
+  }
+]
+
+Allowed source_type values:
+- ecommerce
+- editorial
+- community
+- marketplace
+- niche_blog
+- local_media
+`;
+
+  let rawAiText = "";
+  let aiCandidates = [];
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.6,
+      messages: [{ role: "user", content: prompt }]
+    });
+
+    rawAiText = response.choices?.[0]?.message?.content || "[]";
+    aiCandidates = safeParseJsonArray(rawAiText);
+  } catch (err) {
+    console.warn("AI discovery failed:", err.message);
+  }
+
+  return {
+    aiCandidates,
+    rawAiText,
+    promptUsed: prompt
   };
 }
 
@@ -187,48 +417,16 @@ async function createDiscoveryCandidates({
     blockedDomains
   } = await loadExistingDomainState();
 
-  let aiCandidates = [];
-  let rawAiText = "";
-
-  if (openai) {
-    try {
-      const prompt = `
-You are an expert in identifying local ecommerce, beauty, lifestyle, and content websites.
-
-Generate ${normalizedLimit * 2} REAL websites for:
-Country: ${normalizedCountry}
-Category: ${normalizedCategory}
-
-Rules:
-- Must be real websites
-- Must be relevant to the category
-- Prefer local or regional websites
-- Include ecommerce, blogs, media, and marketplaces
-- Return only valid https/http URLs
-- Avoid duplicates if possible
-
-Return JSON ONLY in this exact format:
-[
-  {
-    "url": "https://example.com",
-    "quality_score": 80,
-    "reputation_score": 10
-  }
-]
-`;
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 0.7,
-        messages: [{ role: "user", content: prompt }]
-      });
-
-      rawAiText = response.choices?.[0]?.message?.content || "[]";
-      aiCandidates = safeParseJsonArray(rawAiText);
-    } catch (err) {
-      console.warn("AI discovery failed, fallback to seeds:", err.message);
-    }
-  }
+  const {
+    aiCandidates,
+    rawAiText,
+    promptUsed
+  } = await generateAiCandidates({
+    country: normalizedCountry,
+    category: normalizedCategory,
+    theme: normalizedTheme,
+    limit: normalizedLimit
+  });
 
   const allSeeds = [...aiCandidates, ...candidateSeeds];
 
@@ -273,7 +471,11 @@ Return JSON ONLY in this exact format:
         domain,
         sourceType: seed.source_type || "ai_generated",
         qualityScore: Number(seed.quality_score || 80),
-        reputationScore: Number(seed.reputation_score || 10)
+        reputationScore: Number(seed.reputation_score || 10),
+        localityScore: Number(seed.locality_score || 70),
+        categoryFitScore: Number(seed.category_fit_score || 70),
+        language: normalizeLanguage(seed.language || "en"),
+        reason: String(seed.reason || "").trim()
       })
     );
 
@@ -300,7 +502,7 @@ Return JSON ONLY in this exact format:
     category: normalizedCategory,
     theme: normalizedTheme,
     requested_limit: normalizedLimit,
-    source: "AI_DISCOVERY_ENGINE",
+    source: "AI_DISCOVERY_ENGINE_BILINGUAL",
 
     ai_candidates_received: aiCandidates.length,
     seed_candidates_received: candidateSeeds.length,
@@ -315,7 +517,9 @@ Return JSON ONLY in this exact format:
     skip_reason_counts: countSkipReasons(skipped),
 
     debug_sample_ai_urls: aiCandidates.slice(0, 10).map((x) => x.url || ""),
-    debug_raw_ai_preview: String(rawAiText || "").slice(0, 500)
+    debug_sample_ai_languages: aiCandidates.slice(0, 10).map((x) => x.language || ""),
+    debug_raw_ai_preview: String(rawAiText || "").slice(0, 800),
+    debug_prompt_preview: String(promptUsed || "").slice(0, 1200)
   };
 }
 
