@@ -1,6 +1,8 @@
 const { db, FieldValue } = require("../config/firestore");
 const { COLLECTIONS, STATUSES, DEFAULTS } = require("../config/constants");
 const { env } = require("../config/env");
+const { createDiscoveryCandidates } = require("./discoveryEngine");
+const { ingestSignals } = require("./signalMemoryEngine");
 
 function isoNow() {
   return new Date().toISOString();
@@ -199,30 +201,13 @@ async function persistDiscoveryRun({
     theme,
     limit,
     dry_run: dryRun,
-    accepted_count: 0,
+    accepted_count: candidates.length,
     trialed_count: candidates.length,
     candidates_created: candidates.length,
     created_at: FieldValue.serverTimestamp(),
     updated_at: FieldValue.serverTimestamp(),
     status: dryRun ? STATUSES.DRY_RUN : STATUSES.COMPLETED
   });
-
-  const batch = db.batch();
-
-  for (const candidate of candidates) {
-    const ref = db
-      .collection(COLLECTIONS.SOURCE_DISCOVERY_CANDIDATES)
-      .doc(candidate.candidate_id);
-
-    batch.set(ref, {
-      ...candidate,
-      discovery_run_id: discoveryRunId,
-      created_at: FieldValue.serverTimestamp(),
-      updated_at: FieldValue.serverTimestamp()
-    });
-  }
-
-  await batch.commit();
 
   return discoveryRunId;
 }
@@ -255,22 +240,20 @@ async function runSocialScan({ country, category }) {
     sources
   });
 
-const { ingestSignals } = require("./signalMemoryEngine");
-
-await ingestSignals({
-  country: normalizedCountry,
-  category: normalizedCategory,
-  sourceType: "social_signal", // 🔥 IMPORTANT
-  signals: mentions.map((m) => ({
-    brand: m.brand,
-    product: m.product,
-    hashtag: m.hashtag,
-    source_weight: 1.2,        // 🔥 stronger than source scan
-    engagement: 2,
-    freshness_boost: 1.5,
-    source_ref: m.discovered_from || "social"
-  }))
-});
+  await ingestSignals({
+    country: normalizedCountry,
+    category: normalizedCategory,
+    sourceType: "social_signal",
+    signals: mentions.map((m) => ({
+      brand: m.brand,
+      product: m.product,
+      hashtag: m.hashtag,
+      source_weight: 1.2,
+      engagement: 2,
+      freshness_boost: 1.5,
+      source_ref: m.discovered_from || "social"
+    }))
+  });
 
   const signalScoreSummary = buildSignalScoreSummary(mentions);
 
@@ -337,71 +320,29 @@ async function runDiscoveryBoost({
   console.log("[DISCOVERY BOOST] start", {
     country: normalizedCountry,
     category: normalizedCategory,
-    limit: normalizedLimit
+    theme: normalizedTheme,
+    limit: normalizedLimit,
+    dryRun
   });
 
-  // 🔥 REALISTIC curated fallback URLs (replace later with real AI discovery)
+  // Curated seeds for now; later this can be replaced by real AI-generated discovery inputs.
   const seedSources = [
-    { url: "https://konvy.com/", domain: "konvy.com" },
-    { url: "https://looksi.com/", domain: "looksi.com" },
-    { url: "https://madamefin.com/", domain: "madamefin.com" },
-    { url: "https://peachy.co.th/", domain: "peachy.co.th" },
-    { url: "https://sudsapda.com/", domain: "sudsapda.com" },
-    { url: "https://vanillamagazine.com/", domain: "vanillamagazine.com" }
+    { url: "https://www.beauticool.com", domain: "beauticool.com", source_type: "curated_seed", quality_score: 85, reputation_score: 10 },
+    { url: "https://www.siwilai.com", domain: "siwilai.com", source_type: "curated_seed", quality_score: 85, reputation_score: 10 },
+    { url: "https://www.pantip.com", domain: "pantip.com", source_type: "curated_seed", quality_score: 80, reputation_score: 10 },
+    { url: "https://www.thaibev.com/en/beauty-wellness", domain: "thaibev.com", source_type: "curated_seed", quality_score: 82, reputation_score: 10 },
+    { url: "https://www.beautrium.com", domain: "beautrium.com", source_type: "curated_seed", quality_score: 86, reputation_score: 10 },
+    { url: "https://www.cosmenet.in.th", domain: "cosmenet.in.th", source_type: "curated_seed", quality_score: 84, reputation_score: 10 },
+    { url: "https://jeban.com", domain: "jeban.com", source_type: "curated_seed", quality_score: 84, reputation_score: 10 }
   ];
 
-  // 🔥 Load existing AI sources to prevent duplicates
-  const aiSnap = await db.collection(COLLECTIONS.AI_SOURCES).get();
-  const existingDomains = new Set(
-    aiSnap.docs.map(d => (d.data().domain || "").toLowerCase())
-  );
-
-  // 🔥 Load candidates to prevent duplicates
-  const candidateSnap = await db.collection(COLLECTIONS.SOURCE_DISCOVERY_CANDIDATES).get();
-  const existingCandidates = new Set(
-    candidateSnap.docs.map(d => (d.data().domain || "").toLowerCase())
-  );
-
-  const candidates = [];
-
-  for (const source of seedSources) {
-    const url = source.url;
-    const domain = source.domain;
-
-    if (!url || !url.startsWith("http")) continue;
-    if (!domain) continue;
-
-    // 🔥 Skip duplicates
-    if (existingDomains.has(domain)) continue;
-    if (existingCandidates.has(domain)) continue;
-
-    candidates.push({
-      candidate_id: buildRunId("candidate"),
-      country: normalizedCountry,
-      category: normalizedCategory,
-      theme: normalizedTheme,
-
-      url,
-      domain,
-
-      source_type: "curated_seed",
-
-      status: dryRun ? STATUSES.DRY_RUN : STATUSES.CANDIDATE,
-
-      quality_score: 85,
-      reputation_score: 10,
-
-      trial_runs_remaining: 3,
-      fail_count: 0,
-      success_count: 0,
-
-      health_status: "unknown",
-      is_active: true,
-      auto_disabled: false
-    });
-  }
-
-  const finalCandidates = candidates.slice(0, normalizedLimit);
+  const discoveryResult = await createDiscoveryCandidates({
+    country: normalizedCountry,
+    category: normalizedCategory,
+    theme: normalizedTheme,
+    limit: normalizedLimit,
+    candidateSeeds: seedSources
+  });
 
   const discoveryRunId = await persistDiscoveryRun({
     runId: null,
@@ -410,15 +351,22 @@ async function runDiscoveryBoost({
     theme: normalizedTheme,
     limit: normalizedLimit,
     dryRun,
-    candidates: finalCandidates
+    candidates: discoveryResult.candidates || []
   });
 
   return {
     ok: true,
-    message: "Discovery boost completed (clean)",
+    message: "Discovery boost completed",
     discovery_run_id: discoveryRunId,
-    candidates_created: finalCandidates.length,
-    candidates: finalCandidates
+    country: normalizedCountry,
+    category: normalizedCategory,
+    theme: normalizedTheme,
+    limit: normalizedLimit,
+    dry_run: dryRun,
+    candidates_created: discoveryResult.candidates_created || 0,
+    skipped_count: discoveryResult.skipped_count || 0,
+    skipped: discoveryResult.skipped || [],
+    candidates: discoveryResult.candidates || []
   };
 }
 
