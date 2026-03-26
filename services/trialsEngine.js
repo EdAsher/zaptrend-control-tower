@@ -30,19 +30,129 @@ function getTimestampMillis(value) {
   }
 }
 
+function isDomainSuspicious(domain = "") {
+  const d = String(domain || "").toLowerCase();
+
+  const badKeywords = [
+    "marry",
+    "wedding",
+    "clinic",
+    "hospital",
+    "crypto",
+    "bet",
+    "loan",
+    "finance",
+    "adult"
+  ];
+
+  return badKeywords.some((k) => d.includes(k));
+}
+
 function evaluateCandidate(candidate, index) {
-  const quality = Number(candidate.quality_score || 0);
-  const approved = quality >= 80;
+  const candidateId = candidate.candidate_id || candidate.id;
+  const domain = candidate.domain || null;
+
+  const qualityScore = Number(candidate.quality_score || 0);
+  const localityScore = Number(candidate.locality_score || 0);
+  const categoryFitScore = Number(candidate.category_fit_score || 0);
+  const reputationScore = Number(candidate.reputation_score || 0);
+  const healthStatus = String(candidate.health_status || "").trim().toLowerCase();
+
+  // Hard fail: unhealthy
+  if (healthStatus !== "healthy") {
+    return {
+      candidate_id: candidateId,
+      domain,
+      quality_score: qualityScore,
+      locality_score: localityScore,
+      category_fit_score: categoryFitScore,
+      reputation_score: reputationScore,
+      decision: STATUSES.TRIAL_REJECTED,
+      decision_reason: "health_not_healthy",
+      assigned_trial_score: 0
+    };
+  }
+
+  // Hard fail: suspicious domain
+  if (isDomainSuspicious(domain)) {
+    return {
+      candidate_id: candidateId,
+      domain,
+      quality_score: qualityScore,
+      locality_score: localityScore,
+      category_fit_score: categoryFitScore,
+      reputation_score: reputationScore,
+      decision: STATUSES.TRIAL_REJECTED,
+      decision_reason: "suspicious_domain",
+      assigned_trial_score: 0
+    };
+  }
+
+  // Hard fail: low category fit
+  if (categoryFitScore < 70) {
+    return {
+      candidate_id: candidateId,
+      domain,
+      quality_score: qualityScore,
+      locality_score: localityScore,
+      category_fit_score: categoryFitScore,
+      reputation_score: reputationScore,
+      decision: STATUSES.TRIAL_REJECTED,
+      decision_reason: "low_category_fit",
+      assigned_trial_score: categoryFitScore
+    };
+  }
+
+  // Hard fail: low quality
+  if (qualityScore < 75) {
+    return {
+      candidate_id: candidateId,
+      domain,
+      quality_score: qualityScore,
+      locality_score: localityScore,
+      category_fit_score: categoryFitScore,
+      reputation_score: reputationScore,
+      decision: STATUSES.TRIAL_REJECTED,
+      decision_reason: "low_quality",
+      assigned_trial_score: qualityScore
+    };
+  }
+
+  // Soft but required: locality
+  if (localityScore < 60) {
+    return {
+      candidate_id: candidateId,
+      domain,
+      quality_score: qualityScore,
+      locality_score: localityScore,
+      category_fit_score: categoryFitScore,
+      reputation_score: reputationScore,
+      decision: STATUSES.TRIAL_REJECTED,
+      decision_reason: "low_locality",
+      assigned_trial_score: localityScore
+    };
+  }
+
+  const weightedScore = Math.round(
+    qualityScore * 0.4 +
+      categoryFitScore * 0.3 +
+      localityScore * 0.2 +
+      reputationScore * 0.1
+  );
+
+  // Small tie-break dampening by index, but never below 0
+  const finalScore = Math.max(0, Math.min(100, weightedScore - index));
 
   return {
-    candidate_id: candidate.candidate_id || candidate.id,
-    domain: candidate.domain || null,
-    quality_score: quality,
-    decision: approved ? STATUSES.TRIAL_APPROVED : STATUSES.TRIAL_REJECTED,
-    decision_reason: approved
-      ? "Quality score meets trial threshold"
-      : "Quality score below trial threshold",
-    assigned_trial_score: Math.max(0, Math.min(100, quality - index))
+    candidate_id: candidateId,
+    domain,
+    quality_score: qualityScore,
+    locality_score: localityScore,
+    category_fit_score: categoryFitScore,
+    reputation_score: reputationScore,
+    decision: STATUSES.TRIAL_APPROVED,
+    decision_reason: "multi_factor_pass",
+    assigned_trial_score: finalScore
   };
 }
 
@@ -60,8 +170,15 @@ function pickBestTrialCandidates(candidates, limit) {
     .sort((a, b) => {
       const qualityA = Number(a.quality_score || 0);
       const qualityB = Number(b.quality_score || 0);
-
       if (qualityB !== qualityA) return qualityB - qualityA;
+
+      const categoryFitA = Number(a.category_fit_score || 0);
+      const categoryFitB = Number(b.category_fit_score || 0);
+      if (categoryFitB !== categoryFitA) return categoryFitB - categoryFitA;
+
+      const localityA = Number(a.locality_score || 0);
+      const localityB = Number(b.locality_score || 0);
+      if (localityB !== localityA) return localityB - localityA;
 
       const updatedA = getTimestampMillis(a.updated_at);
       const updatedB = getTimestampMillis(b.updated_at);
@@ -150,7 +267,7 @@ async function runTrialEvaluation({ country, category, limit = 10 }) {
 
   return {
     ok: true,
-    message: "Trials evaluated",
+    message: "Trials evaluated (multi-factor)",
     trial_run_id: trialRunId,
     country: normalizedCountry,
     category: normalizedCategory,
