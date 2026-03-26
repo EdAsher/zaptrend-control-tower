@@ -42,6 +42,37 @@ function extractDomain(url) {
   }
 }
 
+function stripMarkdownCodeFence(text) {
+  const raw = String(text || "").trim();
+
+  if (raw.startsWith("```")) {
+    return raw
+      .replace(/^```(?:json)?/i, "")
+      .replace(/```$/i, "")
+      .trim();
+  }
+
+  return raw;
+}
+
+function safeParseJsonArray(text) {
+  try {
+    const cleaned = stripMarkdownCodeFence(text);
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function countSkipReasons(items = []) {
+  return items.reduce((acc, item) => {
+    const key = String(item.reason || "unknown");
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
 async function loadExistingDomainState() {
   const [aiSnap, candidateSnap] = await Promise.all([
     db.collection(COLLECTIONS.AI_SOURCES).get(),
@@ -63,7 +94,12 @@ async function loadExistingDomainState() {
     const autoDisabled = data.auto_disabled === true;
     const isActive = data.is_active !== false;
 
-    if (healthStatus === "dead" || healthStatus === "disabled" || autoDisabled || !isActive) {
+    if (
+      healthStatus === "dead" ||
+      healthStatus === "disabled" ||
+      autoDisabled ||
+      !isActive
+    ) {
       blockedDomains.add(domain);
     }
   });
@@ -78,7 +114,11 @@ async function loadExistingDomainState() {
     const healthStatus = String(data.health_status || "").toLowerCase();
     const autoDisabled = data.auto_disabled === true;
 
-    if (healthStatus === "dead" || healthStatus === "disabled" || autoDisabled) {
+    if (
+      healthStatus === "dead" ||
+      healthStatus === "disabled" ||
+      autoDisabled
+    ) {
       blockedDomains.add(domain);
     }
   });
@@ -138,6 +178,7 @@ async function createDiscoveryCandidates({
     category || env.ZAPTREND_DEFAULT_CATEGORY || DEFAULTS.CATEGORY
   );
 
+  const normalizedTheme = String(theme || DEFAULTS.THEME).trim();
   const normalizedLimit = Number(limit || env.ZAPTREND_DISCOVERY_LIMIT || 5);
 
   const {
@@ -147,8 +188,8 @@ async function createDiscoveryCandidates({
   } = await loadExistingDomainState();
 
   let aiCandidates = [];
+  let rawAiText = "";
 
-  // 🔥 STEP 1 — CALL AI
   if (openai) {
     try {
       const prompt = `
@@ -160,12 +201,13 @@ Category: ${normalizedCategory}
 
 Rules:
 - Must be real websites
-- Must be relevant to category
-- Prefer local or regional sites
-- Include ecommerce, blogs, media, marketplaces
+- Must be relevant to the category
+- Prefer local or regional websites
+- Include ecommerce, blogs, media, and marketplaces
+- Return only valid https/http URLs
+- Avoid duplicates if possible
 
-Return JSON ONLY:
-
+Return JSON ONLY in this exact format:
 [
   {
     "url": "https://example.com",
@@ -181,19 +223,14 @@ Return JSON ONLY:
         messages: [{ role: "user", content: prompt }]
       });
 
-      const raw = response.choices?.[0]?.message?.content || "[]";
-
-      aiCandidates = JSON.parse(raw);
+      rawAiText = response.choices?.[0]?.message?.content || "[]";
+      aiCandidates = safeParseJsonArray(rawAiText);
     } catch (err) {
       console.warn("AI discovery failed, fallback to seeds:", err.message);
     }
   }
 
-  // 🔥 STEP 2 — COMBINE AI + SEEDS
-  const allSeeds = [
-    ...aiCandidates,
-    ...candidateSeeds
-  ];
+  const allSeeds = [...aiCandidates, ...candidateSeeds];
 
   const accepted = [];
   const skipped = [];
@@ -231,10 +268,10 @@ Return JSON ONLY:
       buildCandidateDoc({
         country: normalizedCountry,
         category: normalizedCategory,
-        theme,
+        theme: normalizedTheme,
         url,
         domain,
-        sourceType: "ai_generated",
+        sourceType: seed.source_type || "ai_generated",
         qualityScore: Number(seed.quality_score || 80),
         reputationScore: Number(seed.reputation_score || 10)
       })
@@ -243,7 +280,6 @@ Return JSON ONLY:
     if (accepted.length >= normalizedLimit) break;
   }
 
-  // 🔥 STEP 3 — SAVE
   if (accepted.length > 0) {
     const batch = db.batch();
 
@@ -262,9 +298,24 @@ Return JSON ONLY:
     ok: true,
     country: normalizedCountry,
     category: normalizedCategory,
+    theme: normalizedTheme,
+    requested_limit: normalizedLimit,
+    source: "AI_DISCOVERY_ENGINE",
+
+    ai_candidates_received: aiCandidates.length,
+    seed_candidates_received: candidateSeeds.length,
+
     candidates_created: accepted.length,
+    candidates: accepted,
+    accepted_domains: accepted.map((x) => x.domain),
+
     skipped_count: skipped.length,
-    source: "AI_DISCOVERY_ENGINE"
+    skipped,
+    skipped_domains: skipped.map((x) => x.domain || x.url || ""),
+    skip_reason_counts: countSkipReasons(skipped),
+
+    debug_sample_ai_urls: aiCandidates.slice(0, 10).map((x) => x.url || ""),
+    debug_raw_ai_preview: String(rawAiText || "").slice(0, 500)
   };
 }
 
