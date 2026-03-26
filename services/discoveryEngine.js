@@ -1,6 +1,7 @@
 const { db, FieldValue } = require("../config/firestore");
 const { COLLECTIONS, STATUSES, DEFAULTS } = require("../config/constants");
 const { env } = require("../config/env");
+const { openai } = require("../config/openai");
 
 function buildId(prefix = "candidate") {
   const stamp = Date.now();
@@ -132,10 +133,11 @@ async function createDiscoveryCandidates({
   const normalizedCountry = normalizeCountry(
     country || env.ZAPTREND_DEFAULT_COUNTRY || DEFAULTS.COUNTRY
   );
+
   const normalizedCategory = normalizeCategory(
     category || env.ZAPTREND_DEFAULT_CATEGORY || DEFAULTS.CATEGORY
   );
-  const normalizedTheme = String(theme || DEFAULTS.THEME).trim();
+
   const normalizedLimit = Number(limit || env.ZAPTREND_DISCOVERY_LIMIT || 5);
 
   const {
@@ -144,55 +146,84 @@ async function createDiscoveryCandidates({
     blockedDomains
   } = await loadExistingDomainState();
 
+  let aiCandidates = [];
+
+  // 🔥 STEP 1 — CALL AI
+  if (openai) {
+    try {
+      const prompt = `
+You are an expert in identifying local ecommerce, beauty, lifestyle, and content websites.
+
+Generate ${normalizedLimit * 2} REAL websites for:
+Country: ${normalizedCountry}
+Category: ${normalizedCategory}
+
+Rules:
+- Must be real websites
+- Must be relevant to category
+- Prefer local or regional sites
+- Include ecommerce, blogs, media, marketplaces
+
+Return JSON ONLY:
+
+[
+  {
+    "url": "https://example.com",
+    "quality_score": 80,
+    "reputation_score": 10
+  }
+]
+`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.7,
+        messages: [{ role: "user", content: prompt }]
+      });
+
+      const raw = response.choices?.[0]?.message?.content || "[]";
+
+      aiCandidates = JSON.parse(raw);
+    } catch (err) {
+      console.warn("AI discovery failed, fallback to seeds:", err.message);
+    }
+  }
+
+  // 🔥 STEP 2 — COMBINE AI + SEEDS
+  const allSeeds = [
+    ...aiCandidates,
+    ...candidateSeeds
+  ];
+
   const accepted = [];
   const skipped = [];
 
-  for (const seed of candidateSeeds) {
+  for (const seed of allSeeds) {
     const url = normalizeUrl(seed.url || "");
     const domain = normalizeDomain(seed.domain || extractDomain(url));
 
     if (!url || !isValidHttpUrl(url)) {
-      skipped.push({
-        url,
-        domain,
-        reason: "invalid_url"
-      });
+      skipped.push({ url, domain, reason: "invalid_url" });
       continue;
     }
 
     if (!domain) {
-      skipped.push({
-        url,
-        domain,
-        reason: "invalid_domain"
-      });
+      skipped.push({ url, domain, reason: "invalid_domain" });
       continue;
     }
 
     if (blockedDomains.has(domain)) {
-      skipped.push({
-        url,
-        domain,
-        reason: "blocked_domain"
-      });
+      skipped.push({ url, domain, reason: "blocked_domain" });
       continue;
     }
 
     if (existingAiDomains.has(domain)) {
-      skipped.push({
-        url,
-        domain,
-        reason: "already_in_ai_sources"
-      });
+      skipped.push({ url, domain, reason: "already_in_ai_sources" });
       continue;
     }
 
     if (existingCandidateDomains.has(domain)) {
-      skipped.push({
-        url,
-        domain,
-        reason: "already_in_candidates"
-      });
+      skipped.push({ url, domain, reason: "already_in_candidates" });
       continue;
     }
 
@@ -200,11 +231,11 @@ async function createDiscoveryCandidates({
       buildCandidateDoc({
         country: normalizedCountry,
         category: normalizedCategory,
-        theme: normalizedTheme,
+        theme,
         url,
         domain,
-        sourceType: seed.source_type || "curated_seed",
-        qualityScore: Number(seed.quality_score || 85),
+        sourceType: "ai_generated",
+        qualityScore: Number(seed.quality_score || 80),
         reputationScore: Number(seed.reputation_score || 10)
       })
     );
@@ -212,6 +243,7 @@ async function createDiscoveryCandidates({
     if (accepted.length >= normalizedLimit) break;
   }
 
+  // 🔥 STEP 3 — SAVE
   if (accepted.length > 0) {
     const batch = db.batch();
 
@@ -230,12 +262,9 @@ async function createDiscoveryCandidates({
     ok: true,
     country: normalizedCountry,
     category: normalizedCategory,
-    theme: normalizedTheme,
-    requested_limit: normalizedLimit,
     candidates_created: accepted.length,
-    candidates: accepted,
     skipped_count: skipped.length,
-    skipped
+    source: "AI_DISCOVERY_ENGINE"
   };
 }
 
