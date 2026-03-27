@@ -61,6 +61,15 @@ function calculateReputation(candidate) {
   score += successCount * 5;
   score -= failCount * 5;
 
+  // 🔥 ADAPTIVE MEMORY BOOST
+  const memorySignals = Number(candidate.memory_signal_count || 0);
+  const memorySuccess = Number(candidate.memory_success_count || 0);
+  const memoryFail = Number(candidate.memory_fail_count || 0);
+
+  score += memorySignals * 0.2;
+  score += memorySuccess * 5;
+  score -= memoryFail * 5;
+
   // 🔥 STALE DECAY
   const lastUpdated = candidate.updated_at || candidate.created_at;
   if (lastUpdated) {

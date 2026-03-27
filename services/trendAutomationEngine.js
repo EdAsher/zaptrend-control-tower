@@ -3,6 +3,7 @@ const { env } = require("../config/env");
 const { runSourceSignalScan } = require("./sourceSignalScanEngine");
 const { runTrendScoring } = require("./trendScoringEngine");
 const { runSourceHealthCheck } = require("./sourceHealthEngine");
+const { runReputationRecalculation } = require("./reputationEngine");
 
 function buildRunId(prefix = "autorun") {
   const stamp = Date.now();
@@ -46,21 +47,31 @@ async function runFullTrendCycle({
   });
 
   try {
-// 🔥 STEP 0 — HEALTH CHECK
-await runSourceHealthCheck({
-  country: normalizedCountry,
-  category: normalizedCategory,
-  limit: 50
-});
+    // 🔥 STEP 0 — HEALTH CHECK
+    const healthResult = await runSourceHealthCheck({
+      country: normalizedCountry,
+      category: normalizedCategory,
+      limit: 50
+    });
+
+    // 🔥 STEP 1 — SOURCE SIGNAL SCAN + MEMORY UPDATE
     const sourceScanResult = await runSourceSignalScan({
       country: normalizedCountry,
       category: normalizedCategory
     });
 
+    // 🔥 STEP 2 — TREND SCORING
     const trendScoreResult = await runTrendScoring({
       country: normalizedCountry,
       category: normalizedCategory,
       limit: scoreLimit
+    });
+
+    // 🔥 STEP 3 — REPUTATION RECALCULATION
+    const reputationResult = await runReputationRecalculation({
+      country: normalizedCountry,
+      category: normalizedCategory,
+      limit: 20
     });
 
     const finishedAtIso = new Date().toISOString();
@@ -69,18 +80,29 @@ await runSourceHealthCheck({
       {
         status: "COMPLETED",
         finished_at_iso: finishedAtIso,
+
+        health_checked: healthResult?.checked || 0,
+        health_updated: healthResult?.updated || 0,
+
         sources_scanned: sourceScanResult?.sources_scanned || 0,
         signals_extracted: sourceScanResult?.signals_extracted || 0,
         ingested_count:
           sourceScanResult?.ingestion_result?.ingested_count || 0,
+
         trend_run_id: trendScoreResult?.trend_run_id || null,
         scored_count: trendScoreResult?.scored_count || 0,
+
+        reputation_recalculated_count:
+          reputationResult?.recalculated_count || 0,
+        reputation_run_id: reputationResult?.reputation_run_id || null,
+
         top_trends: (trendScoreResult?.trends || []).slice(0, 5).map((t) => ({
           brand: t.brand || "",
           product: t.product || "",
           trend_score: t.trend_score || 0,
           trend_status: t.trend_status || ""
         })),
+
         updated_at: FieldValue.serverTimestamp()
       },
       { merge: true }
@@ -92,8 +114,10 @@ await runSourceHealthCheck({
       automation_run_id: automationRunId,
       country: normalizedCountry,
       category: normalizedCategory,
+      health: healthResult,
       source_scan: sourceScanResult,
-      trend_score: trendScoreResult
+      trend_score: trendScoreResult,
+      reputation: reputationResult
     };
   } catch (error) {
     const finishedAtIso = new Date().toISOString();
