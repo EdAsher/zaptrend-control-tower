@@ -56,7 +56,7 @@ function isEligibleForPromotion(candidate, existingSourcesMap) {
 
   // Quality and reputation gates
   if (qualityScore < 70) return false;
-  if (reputationScore < 50) return false;
+  if (reputationScore < 0) return false;
 
   // Health gate
   if (healthStatus !== "healthy") return false;

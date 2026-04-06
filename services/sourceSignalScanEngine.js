@@ -41,10 +41,50 @@ async function runSourceSignalScan({ country, category }) {
 
   let totalSignals = [];
 
+  const batch = db.batch();
+
   for (const source of sources) {
     const extracted = mockExtractSignalsFromSource(source);
+
     totalSignals = totalSignals.concat(extracted);
+
+    // 🔥 MEMORY UPDATE
+    const signalCount = extracted.length;
+
+    const successCount = Number(source.memory_success_count || 0);
+    const failCount = Number(source.memory_fail_count || 0);
+    const prevSignalCount = Number(source.memory_signal_count || 0);
+
+    const isUseful = signalCount > 0;
+
+    const newSuccess = isUseful ? successCount + 1 : successCount;
+    const newFail = !isUseful ? failCount + 1 : failCount;
+
+    const adaptiveWeight = Math.max(
+      0,
+      Math.min(
+        100,
+        (newSuccess * 5) - (newFail * 5) + prevSignalCount
+      )
+    );
+
+    const ref = db.collection("ai_sources").doc(source.id);
+
+    batch.set(
+      ref,
+      {
+        memory_success_count: newSuccess,
+        memory_fail_count: newFail,
+        memory_signal_count: prevSignalCount + signalCount,
+        memory_last_signal_at: new Date().toISOString(),
+        adaptive_weight: adaptiveWeight,
+        updated_at: new Date().toISOString()
+      },
+      { merge: true }
+    );
   }
+
+  await batch.commit();
 
   const result = await ingestSignals({
     country: normalizedCountry,

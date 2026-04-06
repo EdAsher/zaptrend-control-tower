@@ -56,10 +56,12 @@ function evaluateCandidate(candidate, index) {
   const localityScore = Number(candidate.locality_score || 0);
   const categoryFitScore = Number(candidate.category_fit_score || 0);
   const reputationScore = Number(candidate.reputation_score || 0);
-  const healthStatus = String(candidate.health_status || "").trim().toLowerCase();
+  const healthStatus = String(candidate.health_status || "")
+    .trim()
+    .toLowerCase();
 
-  // Hard fail: unhealthy
-  if (healthStatus !== "healthy") {
+  // Hard fail only for truly bad health states
+  if (healthStatus === "dead" || healthStatus === "disabled") {
     return {
       candidate_id: candidateId,
       domain,
@@ -68,7 +70,7 @@ function evaluateCandidate(candidate, index) {
       category_fit_score: categoryFitScore,
       reputation_score: reputationScore,
       decision: STATUSES.TRIAL_REJECTED,
-      decision_reason: "health_not_healthy",
+      decision_reason: "health_not_eligible",
       assigned_trial_score: 0
     };
   }
@@ -118,7 +120,7 @@ function evaluateCandidate(candidate, index) {
     };
   }
 
-  // Soft but required: locality
+  // Hard fail: low locality
   if (localityScore < 60) {
     return {
       candidate_id: candidateId,
@@ -133,14 +135,17 @@ function evaluateCandidate(candidate, index) {
     };
   }
 
-  const weightedScore = Math.round(
+  let weightedScore = Math.round(
     qualityScore * 0.4 +
       categoryFitScore * 0.3 +
       localityScore * 0.2 +
       reputationScore * 0.1
   );
 
-  // Small tie-break dampening by index, but never below 0
+  // Small trust penalty for non-healthy but not dead states
+  if (healthStatus === "unknown") weightedScore -= 5;
+  if (healthStatus === "warning") weightedScore -= 3;
+
   const finalScore = Math.max(0, Math.min(100, weightedScore - index));
 
   return {
@@ -151,7 +156,10 @@ function evaluateCandidate(candidate, index) {
     category_fit_score: categoryFitScore,
     reputation_score: reputationScore,
     decision: STATUSES.TRIAL_APPROVED,
-    decision_reason: "multi_factor_pass",
+    decision_reason:
+      healthStatus === "healthy"
+        ? "multi_factor_pass"
+        : `multi_factor_pass_${healthStatus || "unknown"}`,
     assigned_trial_score: finalScore
   };
 }
