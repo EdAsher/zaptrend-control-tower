@@ -116,8 +116,19 @@ function computeCreatorTypeScore(memoryDoc) {
   if (types.includes("style_reviewer")) score += 6;
   if (types.includes("fashion_creator")) score += 5;
   if (types.includes("trend_reviewer")) score += 4;
+  if (types.includes("community_reviewer")) score += 4;
 
   return Math.min(score, 12);
+}
+
+function computeMixedSourceConvergenceScore(memoryDoc) {
+  const types = new Set(
+    (memoryDoc.source_types || []).map((x) => String(x || "").trim().toLowerCase())
+  );
+
+  if (types.has("social_signal") && types.has("source_scan")) return 24;
+  if (types.has("social_signal")) return 10;
+  return 0;
 }
 
 function computeTrendScore(memoryDoc) {
@@ -130,6 +141,7 @@ function computeTrendScore(memoryDoc) {
   const travelBuyableScore = computeTravelBuyableScore(memoryDoc);
   const localConfidenceScore = computeLocalConfidenceScore(memoryDoc);
   const creatorTypeScore = computeCreatorTypeScore(memoryDoc);
+  const mixedSourceConvergenceScore = computeMixedSourceConvergenceScore(memoryDoc);
 
   const score =
     totalMentions * 8 +
@@ -140,14 +152,15 @@ function computeTrendScore(memoryDoc) {
     languageAlignmentScore +
     travelBuyableScore +
     localConfidenceScore +
-    creatorTypeScore;
+    creatorTypeScore +
+    mixedSourceConvergenceScore;
 
   return Math.round(score);
 }
 
 function computeTrendStatus(score) {
-  if (score >= 140) return "HOT";
-  if (score >= 90) return "TRENDING";
+  if (score >= 150) return "HOT";
+  if (score >= 95) return "TRENDING";
   if (score >= 45) return "WATCHLIST";
   return "LOW_SIGNAL";
 }
@@ -173,7 +186,9 @@ function isCategoryValidMemory(row, category) {
       text.includes("dessert") ||
       text.includes("ice cream") ||
       text.includes("chips") ||
-      text.includes("candy")
+      text.includes("candy") ||
+      text.includes("laksa") ||
+      text.includes("kaya")
     );
   }
 
