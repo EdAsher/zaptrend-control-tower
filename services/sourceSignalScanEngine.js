@@ -21,6 +21,13 @@ function normalizeText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function stripHtmlTags(value = "") {
+  return String(value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function getCountryLanguageProfile(country) {
   const cc = normalizeCountry(country);
 
@@ -136,10 +143,12 @@ function safeDomainLabel(domain = "") {
 }
 
 function cleanPhrase(value = "") {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .replace(/[|•·]+/g, " ")
-    .trim();
+  return stripHtmlTags(
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .replace(/[|•·]+/g, " ")
+      .trim()
+  );
 }
 
 function inferCreatorType(source) {
@@ -273,7 +282,7 @@ async function fetchHtml(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0B",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0B-fix",
         accept: "text/html,application/xhtml+xml"
       }
     });
@@ -349,15 +358,15 @@ function buildRealSignal({
   localEvidence = ""
 }) {
   const signal = {
-    brand: normalizeText(brand) || safeDomainLabel(source.domain),
-    product: normalizeText(product),
+    brand: stripHtmlTags(normalizeText(brand)) || safeDomainLabel(source.domain),
+    product: stripHtmlTags(normalizeText(product)),
     hashtag: inferHashtag(product, category, context.country),
     source_ref: source.domain || source.source_id || source.id || "",
     source_weight: method === "jsonld_product" ? 1.15 : 1.0,
     engagement: method === "jsonld_product" ? 3 : 2,
     freshness_boost: method === "jsonld_product" ? 1.2 : 1,
     review_language: context.primary_language,
-    local_evidence: localEvidence || `Real extraction from ${source.domain || source.url}`,
+    local_evidence: stripHtmlTags(localEvidence || `Real extraction from ${source.domain || source.url}`),
     travel_buyable: true,
     local_confidence: Math.max(context.local_confidence, confidenceBoost),
     audience_locale: context.audience_locale,
@@ -372,10 +381,12 @@ function candidateFromJsonLdObject(obj, source, category, context) {
   const type = String(obj["@type"] || "").toLowerCase();
   if (!type.includes("product")) return null;
 
-  const name = cleanPhrase(obj.name || "");
+  const name = stripHtmlTags(cleanPhrase(obj.name || ""));
   const brand =
-    cleanPhrase(
-      typeof obj.brand === "object" ? obj.brand?.name || "" : obj.brand || ""
+    stripHtmlTags(
+      cleanPhrase(
+        typeof obj.brand === "object" ? obj.brand?.name || "" : obj.brand || ""
+      )
     ) || safeDomainLabel(source.domain);
 
   if (!name || name.length < 3) return null;
@@ -453,7 +464,7 @@ function extractBrandProductFromPhrase(phrase = "", source = {}) {
 }
 
 function buildSignalFromPhrase(phrase, source, category, context) {
-  const cleaned = cleanPhrase(phrase);
+  const cleaned = stripHtmlTags(cleanPhrase(phrase));
   if (!cleaned) return null;
 
   const { brand, product } = extractBrandProductFromPhrase(cleaned, source);

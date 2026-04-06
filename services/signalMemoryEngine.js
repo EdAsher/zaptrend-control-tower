@@ -8,7 +8,25 @@ function buildId(prefix = "sig") {
 }
 
 function normalizeText(value) {
-  return String(value || "").trim();
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function stripHtmlTags(value) {
+  return String(value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeDocKeyPart(value) {
+  return stripHtmlTags(value)
+    .toLowerCase()
+    .replace(/[\/\\]/g, " ")
+    .replace(/[#?%*:|"<>]/g, " ")
+    .replace(/[^\p{L}\p{N}\s._-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
 }
 
 function normalizeCountry(value) {
@@ -23,9 +41,9 @@ function makeMemoryKey({ country, category, brand, product, hashtag }) {
   return [
     normalizeCountry(country),
     normalizeCategory(category),
-    normalizeText(brand).toLowerCase(),
-    normalizeText(product).toLowerCase(),
-    normalizeText(hashtag).toLowerCase()
+    sanitizeDocKeyPart(brand),
+    sanitizeDocKeyPart(product),
+    sanitizeDocKeyPart(hashtag)
   ].join("__");
 }
 
@@ -225,9 +243,9 @@ async function ingestSignals({
   const memoryOps = [];
 
   for (const raw of signals) {
-    const brand = normalizeText(raw.brand);
-    const product = normalizeText(raw.product);
-    const hashtag = normalizeText(raw.hashtag);
+    const brand = stripHtmlTags(normalizeText(raw.brand));
+    const product = stripHtmlTags(normalizeText(raw.product));
+    const hashtag = stripHtmlTags(normalizeText(raw.hashtag));
 
     if (!isCategoryValidSignal({ brand, product, hashtag }, normalizedCategory)) {
       skipped_count++;
@@ -245,7 +263,7 @@ async function ingestSignals({
     const freshnessBoost = Number(raw.freshness_boost || 1);
 
     const reviewLanguage = normalizeText(raw.review_language || "");
-    const localEvidence = normalizeText(raw.local_evidence || "");
+    const localEvidence = stripHtmlTags(normalizeText(raw.local_evidence || ""));
     const travelBuyable = raw.travel_buyable !== false;
     const localConfidence = Number(raw.local_confidence || 0);
     const audienceLocale = normalizeText(raw.audience_locale || "");
