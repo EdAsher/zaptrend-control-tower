@@ -24,8 +24,21 @@ function normalizeText(value) {
 function stripHtmlTags(value = "") {
   return String(value || "")
     .replace(/<[^>]*>/g, " ")
+    .replace(/&[a-zA-Z0-9#]+;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function containsHtmlLikeGarbage(value = "") {
+  const text = String(value || "").toLowerCase();
+  return (
+    text.includes("<span") ||
+    text.includes("</span") ||
+    text.includes("font-size") ||
+    text.includes("style=") ||
+    text.includes("<div") ||
+    text.includes("</div")
+  );
 }
 
 function getCountryLanguageProfile(country) {
@@ -282,7 +295,7 @@ async function fetchHtml(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0B-fix",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0B-bulletproof",
         accept: "text/html,application/xhtml+xml"
       }
     });
@@ -357,10 +370,16 @@ function buildRealSignal({
   confidenceBoost = 0.82,
   localEvidence = ""
 }) {
+  const cleanBrand = stripHtmlTags(normalizeText(brand));
+  const cleanProduct = stripHtmlTags(normalizeText(product));
+
+  if (!cleanBrand || !cleanProduct) return null;
+  if (containsHtmlLikeGarbage(cleanBrand) || containsHtmlLikeGarbage(cleanProduct)) return null;
+
   const signal = {
-    brand: stripHtmlTags(normalizeText(brand)) || safeDomainLabel(source.domain),
-    product: stripHtmlTags(normalizeText(product)),
-    hashtag: inferHashtag(product, category, context.country),
+    brand: cleanBrand || safeDomainLabel(source.domain),
+    product: cleanProduct,
+    hashtag: inferHashtag(cleanProduct, category, context.country),
     source_ref: source.domain || source.source_id || source.id || "",
     source_weight: method === "jsonld_product" ? 1.15 : 1.0,
     engagement: method === "jsonld_product" ? 3 : 2,
@@ -390,6 +409,7 @@ function candidateFromJsonLdObject(obj, source, category, context) {
     ) || safeDomainLabel(source.domain);
 
   if (!name || name.length < 3) return null;
+  if (containsHtmlLikeGarbage(name) || containsHtmlLikeGarbage(brand)) return null;
 
   return buildRealSignal({
     brand,
@@ -418,12 +438,14 @@ function extractCandidatePhrases(html = "", category = "") {
 
   const phrases = [title, ogTitle, description, ogDescription, h1, ...h2s]
     .filter(Boolean)
-    .filter((x) => x.length >= 4 && x.length <= 120);
+    .filter((x) => x.length >= 4 && x.length <= 120)
+    .filter((x) => !containsHtmlLikeGarbage(x));
 
   const bodyCandidates = bodyText
     .split(/[.!?•|]/)
     .map((x) => cleanPhrase(x))
-    .filter((x) => x.length >= 10 && x.length <= 90);
+    .filter((x) => x.length >= 10 && x.length <= 90)
+    .filter((x) => !containsHtmlLikeGarbage(x));
 
   for (const part of bodyCandidates) {
     if (scorePhrase(part, category) >= 3) {
@@ -466,11 +488,13 @@ function extractBrandProductFromPhrase(phrase = "", source = {}) {
 function buildSignalFromPhrase(phrase, source, category, context) {
   const cleaned = stripHtmlTags(cleanPhrase(phrase));
   if (!cleaned) return null;
+  if (containsHtmlLikeGarbage(cleaned)) return null;
 
   const { brand, product } = extractBrandProductFromPhrase(cleaned, source);
 
   if (!product || product.length < 4) return null;
   if (product.length > 110) return null;
+  if (containsHtmlLikeGarbage(brand) || containsHtmlLikeGarbage(product)) return null;
 
   return buildRealSignal({
     brand,
@@ -607,7 +631,8 @@ async function runWithConcurrency(items, worker, concurrency = 2) {
       const currentIndex = index++;
       try {
         results[currentIndex] = await worker(items[currentIndex], currentIndex);
-      } catch {
+      } catch (error) {
+        console.warn("[SOURCE_SCAN] worker error:", error?.message || error);
         results[currentIndex] = [];
       }
     }

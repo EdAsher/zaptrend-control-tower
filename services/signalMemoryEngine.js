@@ -11,22 +11,32 @@ function normalizeText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function stripHtmlTags(value) {
+function stripHtmlTags(value = "") {
   return String(value || "")
     .replace(/<[^>]*>/g, " ")
+    .replace(/&[a-zA-Z0-9#]+;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function sanitizeDocKeyPart(value) {
-  return stripHtmlTags(value)
+function safeClean(value = "") {
+  return stripHtmlTags(String(value || ""))
+    .replace(/[\/\\]/g, " ")
+    .replace(/[#?%*:|"<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+function safeKeyPart(value = "") {
+  return stripHtmlTags(String(value || ""))
     .toLowerCase()
     .replace(/[\/\\]/g, " ")
     .replace(/[#?%*:|"<>]/g, " ")
     .replace(/[^\p{L}\p{N}\s._-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 120);
+    .slice(0, 80);
 }
 
 function normalizeCountry(value) {
@@ -38,13 +48,24 @@ function normalizeCategory(value) {
 }
 
 function makeMemoryKey({ country, category, brand, product, hashtag }) {
-  return [
+  const parts = [
     normalizeCountry(country),
     normalizeCategory(category),
-    sanitizeDocKeyPart(brand),
-    sanitizeDocKeyPart(product),
-    sanitizeDocKeyPart(hashtag)
-  ].join("__");
+    safeKeyPart(brand),
+    safeKeyPart(product),
+    safeKeyPart(hashtag)
+  ].filter(Boolean);
+
+  return parts.join("__");
+}
+
+function isSafeMemoryKey(memoryKey = "") {
+  return (
+    typeof memoryKey === "string" &&
+    memoryKey.length >= 5 &&
+    !memoryKey.includes("/") &&
+    !memoryKey.includes("\\")
+  );
 }
 
 function scoreSignal({ sourceWeight = 1, engagement = 1, freshnessBoost = 1 }) {
@@ -90,7 +111,8 @@ function isCategoryValidSignal({ brand, product, hashtag }, category) {
       text.includes("local") ||
       text.includes("market") ||
       text.includes("handmade") ||
-      text.includes("scarf")
+      text.includes("scarf") ||
+      text.includes("artisan")
     );
   }
 
@@ -133,6 +155,11 @@ async function upsertMemoryDoc({
   audienceLocale,
   creatorType
 }) {
+  if (!isSafeMemoryKey(memoryKey)) {
+    console.warn("[SAFEGUARD] Invalid memory key blocked:", memoryKey);
+    return { skipped: true, reason: "invalid_memory_key" };
+  }
+
   const memoryRef = db.collection("signal_memory").doc(memoryKey);
 
   await db.runTransaction(async (tx) => {
@@ -220,6 +247,8 @@ async function upsertMemoryDoc({
       { merge: true }
     );
   });
+
+  return { skipped: false };
 }
 
 async function ingestSignals({
@@ -239,105 +268,136 @@ async function ingestSignals({
   const results = [];
   let skipped_count = 0;
   const skipped = [];
-
   const memoryOps = [];
 
   for (const raw of signals) {
-    const brand = stripHtmlTags(normalizeText(raw.brand));
-    const product = stripHtmlTags(normalizeText(raw.product));
-    const hashtag = stripHtmlTags(normalizeText(raw.hashtag));
+    try {
+      const brand = safeClean(raw.brand);
+      const product = safeClean(raw.product);
+      const hashtag = safeClean(raw.hashtag);
 
-    if (!isCategoryValidSignal({ brand, product, hashtag }, normalizedCategory)) {
+      if (!brand || !product) {
+        skipped_count++;
+        skipped.push({
+          brand,
+          product,
+          hashtag,
+          reason: "empty_brand_or_product"
+        });
+        continue;
+      }
+
+      if (!isCategoryValidSignal({ brand, product, hashtag }, normalizedCategory)) {
+        skipped_count++;
+        skipped.push({
+          brand,
+          product,
+          hashtag,
+          reason: "off_category_signal"
+        });
+        continue;
+      }
+
+      const sourceWeight = Number(raw.source_weight || 1);
+      const engagement = Number(raw.engagement || 1);
+      const freshnessBoost = Number(raw.freshness_boost || 1);
+
+      const reviewLanguage = normalizeText(raw.review_language || "");
+      const localEvidence = safeClean(raw.local_evidence || "");
+      const travelBuyable = raw.travel_buyable !== false;
+      const localConfidence = Number(raw.local_confidence || 0);
+      const audienceLocale = normalizeText(raw.audience_locale || "");
+      const creatorType = normalizeText(raw.creator_type || "");
+
+      const signalScore = scoreSignal({
+        sourceWeight,
+        engagement,
+        freshnessBoost
+      });
+
+      const eventId = buildId("signalevt");
+      const memoryKey = makeMemoryKey({
+        country: normalizedCountry,
+        category: normalizedCategory,
+        brand,
+        product,
+        hashtag
+      });
+
+      if (!isSafeMemoryKey(memoryKey)) {
+        skipped_count++;
+        skipped.push({
+          brand,
+          product,
+          hashtag,
+          reason: "invalid_memory_key"
+        });
+        continue;
+      }
+
+      const eventRef = db.collection("signal_events").doc(eventId);
+      batch.set(eventRef, {
+        signal_event_id: eventId,
+        memory_key: memoryKey,
+        country: normalizedCountry,
+        category: normalizedCategory,
+        brand,
+        product,
+        hashtag,
+        source_type: sourceType,
+        source_ref: raw.source_ref || null,
+        engagement,
+        source_weight: sourceWeight,
+        freshness_boost: freshnessBoost,
+        signal_score: signalScore,
+        review_language: reviewLanguage || null,
+        local_evidence: localEvidence || null,
+        travel_buyable: travelBuyable,
+        local_confidence: localConfidence || 0,
+        audience_locale: audienceLocale || null,
+        creator_type: creatorType || null,
+        created_at: FieldValue.serverTimestamp()
+      });
+
+      memoryOps.push(
+        upsertMemoryDoc({
+          memoryKey,
+          normalizedCountry,
+          normalizedCategory,
+          brand,
+          product,
+          hashtag,
+          signalScore,
+          sourceType,
+          reviewLanguage,
+          localEvidence,
+          travelBuyable,
+          localConfidence,
+          audienceLocale,
+          creatorType
+        })
+      );
+
+      results.push({
+        event_id: eventId,
+        memory_key: memoryKey,
+        brand,
+        product,
+        hashtag,
+        signal_score: signalScore,
+        review_language: reviewLanguage || null,
+        travel_buyable: travelBuyable,
+        local_confidence: localConfidence || 0
+      });
+    } catch (error) {
       skipped_count++;
       skipped.push({
-        brand,
-        product,
-        hashtag,
-        reason: "off_category_signal"
+        brand: String(raw?.brand || ""),
+        product: String(raw?.product || ""),
+        hashtag: String(raw?.hashtag || ""),
+        reason: `ingest_exception:${String(error?.message || "unknown_error")}`.slice(0, 200)
       });
-      continue;
     }
-
-    const sourceWeight = Number(raw.source_weight || 1);
-    const engagement = Number(raw.engagement || 1);
-    const freshnessBoost = Number(raw.freshness_boost || 1);
-
-    const reviewLanguage = normalizeText(raw.review_language || "");
-    const localEvidence = stripHtmlTags(normalizeText(raw.local_evidence || ""));
-    const travelBuyable = raw.travel_buyable !== false;
-    const localConfidence = Number(raw.local_confidence || 0);
-    const audienceLocale = normalizeText(raw.audience_locale || "");
-    const creatorType = normalizeText(raw.creator_type || "");
-
-    const signalScore = scoreSignal({
-      sourceWeight,
-      engagement,
-      freshnessBoost
-    });
-
-    const eventId = buildId("signalevt");
-    const memoryKey = makeMemoryKey({
-      country: normalizedCountry,
-      category: normalizedCategory,
-      brand,
-      product,
-      hashtag
-    });
-
-    const eventRef = db.collection("signal_events").doc(eventId);
-    batch.set(eventRef, {
-      signal_event_id: eventId,
-      memory_key: memoryKey,
-      country: normalizedCountry,
-      category: normalizedCategory,
-      brand,
-      product,
-      hashtag,
-      source_type: sourceType,
-      source_ref: raw.source_ref || null,
-      engagement,
-      source_weight: sourceWeight,
-      freshness_boost: freshnessBoost,
-      signal_score: signalScore,
-      review_language: reviewLanguage || null,
-      local_evidence: localEvidence || null,
-      travel_buyable: travelBuyable,
-      local_confidence: localConfidence || 0,
-      audience_locale: audienceLocale || null,
-      creator_type: creatorType || null,
-      created_at: FieldValue.serverTimestamp()
-    });
-
-    memoryOps.push(
-      upsertMemoryDoc({
-        memoryKey,
-        normalizedCountry,
-        normalizedCategory,
-        brand,
-        product,
-        hashtag,
-        signalScore,
-        sourceType,
-        reviewLanguage,
-        localEvidence,
-        travelBuyable,
-        localConfidence,
-        audienceLocale,
-        creatorType
-      })
-    );
-
-    results.push({
-      event_id: eventId,
-      memory_key: memoryKey,
-      brand,
-      product,
-      hashtag,
-      signal_score: signalScore,
-      review_language: reviewLanguage || null,
-      travel_buyable: travelBuyable,
-      local_confidence: localConfidence || 0
-    });
   }
 
   await batch.commit();
