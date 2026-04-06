@@ -34,11 +34,102 @@ function containsHtmlLikeGarbage(value = "") {
   return (
     text.includes("<span") ||
     text.includes("</span") ||
-    text.includes("font-size") ||
-    text.includes("style=") ||
     text.includes("<div") ||
-    text.includes("</div")
+    text.includes("</div") ||
+    text.includes("style=") ||
+    text.includes("font-size") ||
+    text.includes("display:") ||
+    text.includes("color:") ||
+    text.includes("padding:") ||
+    text.includes("margin:")
   );
+}
+
+function isLowIntentNoise(text = "") {
+  const t = String(text || "").toLowerCase();
+
+  if (!t) return true;
+
+  if (
+    t.includes("why ") ||
+    t.includes("how to ") ||
+    t.includes("guide") ||
+    t.includes("what is ") ||
+    t.includes("history of ") ||
+    t.includes("benefits of ") ||
+    t.includes("facts about ") ||
+    t.includes("shipping worldwide") ||
+    t.includes("worldwide shipping") ||
+    t.includes("global delivery") ||
+    t.includes("international shipping") ||
+    t.includes("us uk japan") ||
+    t.includes("since 2003") ||
+    t.includes("buy now") ||
+    t.includes("click here")
+  ) {
+    return true;
+  }
+
+  if (t.split(" ").length > 12) return true;
+
+  return false;
+}
+
+function isHighIntentProduct(text = "", category = "") {
+  const t = String(text || "").toLowerCase();
+
+  if (!t) return false;
+  if (containsHtmlLikeGarbage(t)) return false;
+  if (isLowIntentNoise(t)) return false;
+
+  if (category === "snacks_drinks") {
+    return (
+      t.includes("tea") ||
+      t.includes("drink") ||
+      t.includes("snack") ||
+      t.includes("milk") ||
+      t.includes("noodle") ||
+      t.includes("chips") ||
+      t.includes("juice") ||
+      t.includes("coffee") ||
+      t.includes("seaweed") ||
+      t.includes("flavor") ||
+      t.includes("food")
+    );
+  }
+
+  if (category === "souvenirs_local_finds") {
+    return (
+      t.includes("souvenir") ||
+      t.includes("craft") ||
+      t.includes("gift") ||
+      t.includes("silk") ||
+      t.includes("ceramic") ||
+      t.includes("tableware") ||
+      t.includes("bag") ||
+      t.includes("handmade") ||
+      t.includes("artisan") ||
+      t.includes("market") ||
+      t.includes("scarf")
+    );
+  }
+
+  if (category === "fashion_accessories") {
+    return (
+      t.includes("bag") ||
+      t.includes("wallet") ||
+      t.includes("earring") ||
+      t.includes("bracelet") ||
+      t.includes("necklace") ||
+      t.includes("tote") ||
+      t.includes("handbag") ||
+      t.includes("fashion") ||
+      t.includes("accessories") ||
+      t.includes("jewelry")
+    );
+  }
+
+  return false;
 }
 
 function getCountryLanguageProfile(country) {
@@ -295,7 +386,7 @@ async function fetchHtml(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0B-bulletproof",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0C",
         accept: "text/html,application/xhtml+xml"
       }
     });
@@ -375,6 +466,7 @@ function buildRealSignal({
 
   if (!cleanBrand || !cleanProduct) return null;
   if (containsHtmlLikeGarbage(cleanBrand) || containsHtmlLikeGarbage(cleanProduct)) return null;
+  if (!isHighIntentProduct(`${cleanBrand} ${cleanProduct}`, category)) return null;
 
   const signal = {
     brand: cleanBrand || safeDomainLabel(source.domain),
@@ -410,6 +502,7 @@ function candidateFromJsonLdObject(obj, source, category, context) {
 
   if (!name || name.length < 3) return null;
   if (containsHtmlLikeGarbage(name) || containsHtmlLikeGarbage(brand)) return null;
+  if (!isHighIntentProduct(name, category)) return null;
 
   return buildRealSignal({
     brand,
@@ -439,16 +532,18 @@ function extractCandidatePhrases(html = "", category = "") {
   const phrases = [title, ogTitle, description, ogDescription, h1, ...h2s]
     .filter(Boolean)
     .filter((x) => x.length >= 4 && x.length <= 120)
-    .filter((x) => !containsHtmlLikeGarbage(x));
+    .filter((x) => !containsHtmlLikeGarbage(x))
+    .filter((x) => !isLowIntentNoise(x));
 
   const bodyCandidates = bodyText
     .split(/[.!?•|]/)
     .map((x) => cleanPhrase(x))
     .filter((x) => x.length >= 10 && x.length <= 90)
-    .filter((x) => !containsHtmlLikeGarbage(x));
+    .filter((x) => !containsHtmlLikeGarbage(x))
+    .filter((x) => !isLowIntentNoise(x));
 
   for (const part of bodyCandidates) {
-    if (scorePhrase(part, category) >= 3) {
+    if (scorePhrase(part, category) >= 3 && isHighIntentProduct(part, category)) {
       phrases.push(part);
     }
     if (phrases.length >= 16) break;
@@ -489,6 +584,7 @@ function buildSignalFromPhrase(phrase, source, category, context) {
   const cleaned = stripHtmlTags(cleanPhrase(phrase));
   if (!cleaned) return null;
   if (containsHtmlLikeGarbage(cleaned)) return null;
+  if (!isHighIntentProduct(cleaned, category)) return null;
 
   const { brand, product } = extractBrandProductFromPhrase(cleaned, source);
 
@@ -563,18 +659,21 @@ function getFallbackSignals(source, category, country) {
     (fallbackMap[category] && fallbackMap[category].TH) ||
     [];
 
-  return set.slice(0, MAX_SIGNALS_PER_SOURCE).map((item) =>
-    buildRealSignal({
-      brand: item.brand,
-      product: item.product,
-      source,
-      category,
-      context,
-      method: "fallback",
-      confidenceBoost: 0.7,
-      localEvidence: `Fallback extraction used for ${source.domain || source.url}`
-    })
-  ).filter(Boolean);
+  return set
+    .slice(0, MAX_SIGNALS_PER_SOURCE)
+    .map((item) =>
+      buildRealSignal({
+        brand: item.brand,
+        product: item.product,
+        source,
+        category,
+        context,
+        method: "fallback",
+        confidenceBoost: 0.7,
+        localEvidence: `Fallback extraction used for ${source.domain || source.url}`
+      })
+    )
+    .filter(Boolean);
 }
 
 async function extractSignalsFromSource(source, category, country) {
@@ -613,7 +712,9 @@ async function extractSignalsFromSource(source, category, country) {
       .filter(Boolean)
   );
 
-  const combined = dedupeSignals([...jsonLdSignals, ...phraseSignals]);
+  const combined = dedupeSignals([...jsonLdSignals, ...phraseSignals]).filter(
+    (s) => isHighIntentProduct(`${s.brand} ${s.product}`, category)
+  );
 
   if (combined.length > 0) {
     return combined.slice(0, MAX_SIGNALS_PER_SOURCE);
