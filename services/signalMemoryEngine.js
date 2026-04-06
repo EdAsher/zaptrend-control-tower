@@ -177,38 +177,39 @@ async function ingestSignals({
     });
 
     const memoryRef = db.collection("signal_memory").doc(memoryKey);
-    batch.set(
-      memoryRef,
-      {
-        memory_key: memoryKey,
-        country: normalizedCountry,
-        category: normalizedCategory,
-        brand,
-        product,
-        hashtag,
-        total_mentions: FieldValue.increment(1),
-        cumulative_score: FieldValue.increment(signalScore),
-        last_signal_score: signalScore,
-        source_types: FieldValue.arrayUnion(sourceType),
-        last_seen_at: FieldValue.serverTimestamp(),
-        updated_at: FieldValue.serverTimestamp(),
 
-        review_languages: reviewLanguage
-          ? FieldValue.arrayUnion(reviewLanguage)
-          : FieldValue.arrayUnion(),
-        latest_review_language: reviewLanguage || null,
-        local_evidence_samples: localEvidence
-          ? FieldValue.arrayUnion(localEvidence)
-          : FieldValue.arrayUnion(),
-        travel_buyable: travelBuyable,
-        max_local_confidence: Math.max(0, Math.min(1, localConfidence || 0)),
-        latest_audience_locale: audienceLocale || null,
-        creator_types: creatorType
-          ? FieldValue.arrayUnion(creatorType)
-          : FieldValue.arrayUnion()
-      },
-      { merge: true }
-    );
+    const memoryPayload = {
+      memory_key: memoryKey,
+      country: normalizedCountry,
+      category: normalizedCategory,
+      brand,
+      product,
+      hashtag,
+      total_mentions: FieldValue.increment(1),
+      cumulative_score: FieldValue.increment(signalScore),
+      last_signal_score: signalScore,
+      source_types: FieldValue.arrayUnion(sourceType),
+      last_seen_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+      travel_buyable: travelBuyable,
+      max_local_confidence: Math.max(0, Math.min(1, localConfidence || 0)),
+      latest_review_language: reviewLanguage || null,
+      latest_audience_locale: audienceLocale || null
+    };
+
+    if (reviewLanguage) {
+      memoryPayload.review_languages = FieldValue.arrayUnion(reviewLanguage);
+    }
+
+    if (localEvidence) {
+      memoryPayload.local_evidence_samples = FieldValue.arrayUnion(localEvidence);
+    }
+
+    if (creatorType) {
+      memoryPayload.creator_types = FieldValue.arrayUnion(creatorType);
+    }
+
+    batch.set(memoryRef, memoryPayload, { merge: true });
 
     results.push({
       event_id: eventId,
