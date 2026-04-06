@@ -54,211 +54,103 @@ function getCountryLanguageProfile(country) {
   );
 }
 
-function buildSignalItems(source, samples, context) {
-  const sourceType = String(source.source_type || "").toLowerCase();
-  const inferredCreatorType =
-    sourceType === "editorial" || sourceType === "local_media"
-      ? "local_reviewer"
-      : sourceType === "community"
-      ? "community_reviewer"
-      : sourceType === "marketplace" || sourceType === "ecommerce"
-      ? "shopping_reviewer"
-      : "trend_reviewer";
-
-  return samples.map((item) => ({
-    ...item,
-    source_ref: source.domain || source.source_id || source.id || "",
-    source_weight: 1,
-    engagement: Math.floor(Math.random() * 5) + 1,
-    freshness_boost: 1,
-    review_language: context.primary_language,
-    local_evidence:
-      item.local_evidence ||
-      `Country-local source scan signal from ${context.country} for ${context.category}`,
-    travel_buyable: item.travel_buyable !== false,
-    local_confidence: Number(source.adaptive_weight)
-      ? Math.max(0.75, Math.min(0.98, Number(source.adaptive_weight) / 100))
-      : context.local_confidence,
-    audience_locale: context.audience_locale,
-    creator_type: inferredCreatorType
-  }));
+function decodeHtml(value = "") {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
 }
 
-function extractSignalsFromSource(source, category, country) {
-  const cat = String(category || "").toLowerCase();
-  const cc = normalizeCountry(country);
-  const context = {
-    ...getCountryLanguageProfile(cc),
-    country: cc,
-    category: cat
-  };
+function stripHtml(html = "") {
+  return decodeHtml(
+    String(html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
 
-  if (cat === "snacks_drinks") {
-    const samplesByCountry = {
-      TH: [
-        {
-          brand: "Pocky Thailand",
-          product: "Thai Milk Tea Flavor",
-          hashtag: "#thaiflavors",
-          local_evidence: "Thai local source mentions limited local flavor snack demand",
-          travel_buyable: true
-        },
-        {
-          brand: "Tao Kae Noi",
-          product: "Seaweed Snacks",
-          hashtag: "#thaistreetsnack",
-          local_evidence: "Thai local source mentions giftable snack demand",
-          travel_buyable: true
-        },
-        {
-          brand: "Ichitan",
-          product: "Green Tea Drink",
-          hashtag: "#thaidrinks",
-          local_evidence: "Thai beverage trend visible in local source coverage",
-          travel_buyable: true
-        },
-        {
-          brand: "Mama",
-          product: "Instant Noodles Tom Yum",
-          hashtag: "#thaiinstantfood",
-          local_evidence: "Thai local source references recognizable take-home food item",
-          travel_buyable: true
-        },
-        {
-          brand: "Dutch Mill",
-          product: "Yogurt Drink",
-          hashtag: "#thaidairy",
-          local_evidence: "Thai local source highlights familiar ready-to-buy drink",
-          travel_buyable: true
-        }
-      ],
-      SG: [
-        {
-          brand: "Irvins",
-          product: "Salted Egg Snacks",
-          hashtag: "#sgsnackfinds",
-          local_evidence: "Singapore local source highlights iconic salted egg snack demand",
-          travel_buyable: true
-        },
-        {
-          brand: "TWG",
-          product: "Tea Gift Sets",
-          hashtag: "#sggiftablefood",
-          local_evidence: "Singapore local source highlights premium tea as a bring-back gift",
-          travel_buyable: true
-        },
-        {
-          brand: "Old Chang Kee",
-          product: "Snack Packs",
-          hashtag: "#sgbites",
-          local_evidence: "Singapore local source highlights recognizable snack packs",
-          travel_buyable: true
-        },
-        {
-          brand: "Ya Kun",
-          product: "Kaya Toast Gift Set",
-          hashtag: "#sglocaltastes",
-          local_evidence: "Singapore local source references giftable local breakfast flavors",
-          travel_buyable: true
-        },
-        {
-          brand: "Prima Taste",
-          product: "Laksa Pack",
-          hashtag: "#sgfoodsouvenir",
-          local_evidence: "Singapore local source points to packable local food souvenir demand",
-          travel_buyable: true
-        }
-      ]
-    };
+function extractTagContent(html = "", pattern) {
+  const match = String(html || "").match(pattern);
+  return match ? decodeHtml(match[1] || "").trim() : "";
+}
 
-    return buildSignalItems(source, samplesByCountry[cc] || samplesByCountry.TH, context);
+function extractMetaContent(html = "", key) {
+  const patterns = [
+    new RegExp(`<meta[^>]+property=["']${key}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${key}["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+name=["']${key}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${key}["'][^>]*>`, "i")
+  ];
+
+  for (const pattern of patterns) {
+    const value = extractTagContent(html, pattern);
+    if (value) return value;
   }
 
-  if (cat === "souvenirs_local_finds") {
-    const samples = [
-      {
-        brand: "Chatuchak Market",
-        product: "Handmade Crafts",
-        hashtag: "#bangkoksouvenir",
-        local_evidence: "Local source highlights handmade market finds popular with shoppers",
-        travel_buyable: true
-      },
-      {
-        brand: "Thai Silk",
-        product: "Scarves",
-        hashtag: "#thailandcraft",
-        local_evidence: "Local source highlights silk as a recognizable Thai gift item",
-        travel_buyable: true
-      },
-      {
-        brand: "Elephant Brand",
-        product: "Thai Souvenirs",
-        hashtag: "#thaigifts",
-        local_evidence: "Local source highlights mainstream souvenir demand",
-        travel_buyable: true
-      },
-      {
-        brand: "Benjarong",
-        product: "Ceramic Tableware",
-        hashtag: "#thaiceramics",
-        local_evidence: "Local source highlights culturally distinctive craft items",
-        travel_buyable: true
-      },
-      {
-        brand: "Naraya",
-        product: "Bangkok Fabric Bags",
-        hashtag: "#localfinds",
-        local_evidence: "Local source highlights practical, giftable Bangkok finds",
-        travel_buyable: true
-      }
-    ];
+  return "";
+}
 
-    return buildSignalItems(source, samples, context);
+function extractTitle(html = "") {
+  return extractTagContent(html, /<title[^>]*>([\s\S]*?)<\/title>/i);
+}
+
+function inferLanguageFromHtml(html = "", fallback = "en") {
+  const langAttr = extractTagContent(html, /<html[^>]+lang=["']([^"']+)["']/i);
+  if (langAttr) return langAttr.toLowerCase().slice(0, 2);
+
+  const text = stripHtml(html).slice(0, 3000);
+
+  if (/[ก-๙]/.test(text)) return "th";
+  if (/[ぁ-んァ-ン一-龯]/.test(text)) return "ja";
+  if (/[가-힣]/.test(text)) return "ko";
+  if (/[À-ỹ]/.test(text)) return "vi";
+
+  return fallback;
+}
+
+function safeDomainLabel(domain = "") {
+  return String(domain || "")
+    .replace(/^www\./i, "")
+    .split(".")[0]
+    .replace(/[-_]+/g, " ")
+    .trim();
+}
+
+function cleanPhrase(value = "") {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[|•·]+/g, " ")
+    .trim();
+}
+
+function scorePhrase(phrase = "", category = "") {
+  const text = phrase.toLowerCase();
+
+  let score = 0;
+
+  if (category === "snacks_drinks") {
+    if (/(snack|drink|tea|coffee|milk|juice|seaweed|noodle|flavor|soda|laksa|kaya|chips|candy|yogurt|food)/i.test(text)) score += 3;
+    if (/(limited|exclusive|local|popular|best|viral|gift|souvenir)/i.test(text)) score += 1;
   }
 
-  if (cat === "fashion_accessories") {
-    const samples = [
-      {
-        brand: "Gentlewoman",
-        product: "Canvas Tote Bag",
-        hashtag: "#bangkokfashion",
-        local_evidence: "Local source highlights a highly visible Thai accessory trend",
-        travel_buyable: true
-      },
-      {
-        brand: "Naraya",
-        product: "Mini Handbag",
-        hashtag: "#thaifashionfinds",
-        local_evidence: "Local source highlights a giftable Thai fashion item",
-        travel_buyable: true
-      },
-      {
-        brand: "Chatuchak Fashion",
-        product: "Local Statement Earrings",
-        hashtag: "#marketstyle",
-        local_evidence: "Local source highlights local-designer accessory appeal",
-        travel_buyable: true
-      },
-      {
-        brand: "Pomelo",
-        product: "Fashion Accessories Edit",
-        hashtag: "#thstyle",
-        local_evidence: "Local source highlights Thailand fashion-accessory demand",
-        travel_buyable: true
-      },
-      {
-        brand: "Thai Designer",
-        product: "Minimalist Wallet",
-        hashtag: "#bangkokfinds",
-        local_evidence: "Local source highlights portable and giftable design items",
-        travel_buyable: true
-      }
-    ];
-
-    return buildSignalItems(source, samples, context);
+  if (category === "souvenirs_local_finds") {
+    if (/(souvenir|gift|craft|artisan|handmade|silk|ceramic|tableware|market|local|heritage|culture|scarf|bag)/i.test(text)) score += 3;
+    if (/(exclusive|traditional|authentic|local|bangkok|chiang mai|thai)/i.test(text)) score += 1;
   }
 
-  return [];
+  if (category === "fashion_accessories") {
+    if (/(bag|wallet|earring|bracelet|necklace|tote|handbag|accessories|fashion|style|jewelry)/i.test(text)) score += 3;
+    if (/(trend|viral|local|designer|minimal|edit)/i.test(text)) score += 1;
+  }
+
+  return score;
 }
 
 function isCategoryValid(signal, category) {
@@ -277,7 +169,10 @@ function isCategoryValid(signal, category) {
       text.includes("seaweed") ||
       text.includes("yogurt") ||
       text.includes("laksa") ||
-      text.includes("kaya")
+      text.includes("kaya") ||
+      text.includes("chips") ||
+      text.includes("coffee") ||
+      text.includes("juice")
     );
   }
 
@@ -292,7 +187,9 @@ function isCategoryValid(signal, category) {
       text.includes("bag") ||
       text.includes("local") ||
       text.includes("handmade") ||
-      text.includes("scarf")
+      text.includes("scarf") ||
+      text.includes("artisan") ||
+      text.includes("market")
     );
   }
 
@@ -305,11 +202,328 @@ function isCategoryValid(signal, category) {
       text.includes("accessories") ||
       text.includes("tote") ||
       text.includes("handbag") ||
-      text.includes("style")
+      text.includes("style") ||
+      text.includes("jewelry") ||
+      text.includes("bracelet") ||
+      text.includes("necklace")
     );
   }
 
   return true;
+}
+
+async function fetchHtml(url) {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0A",
+        accept: "text/html,application/xhtml+xml"
+      }
+    });
+
+    const html = await res.text();
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      html: html || ""
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      html: "",
+      error: String(error?.message || "fetch_failed")
+    };
+  }
+}
+
+function extractJsonLdBlocks(html = "") {
+  const matches = [...String(html || "").matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  const blocks = [];
+
+  for (const match of matches) {
+    const raw = (match[1] || "").trim();
+    if (!raw) continue;
+
+    try {
+      const parsed = JSON.parse(raw);
+      blocks.push(parsed);
+    } catch {
+      // ignore invalid block
+    }
+  }
+
+  return blocks;
+}
+
+function flattenJsonLd(items) {
+  const out = [];
+
+  function walk(node) {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (typeof node === "object") {
+      out.push(node);
+      if (Array.isArray(node["@graph"])) node["@graph"].forEach(walk);
+    }
+  }
+
+  walk(items);
+  return out;
+}
+
+function candidateFromJsonLdObject(obj, source, category, context) {
+  const type = String(obj["@type"] || "").toLowerCase();
+  if (!type.includes("product")) return null;
+
+  const name = cleanPhrase(obj.name || "");
+  const brand =
+    cleanPhrase(
+      typeof obj.brand === "object" ? obj.brand?.name || "" : obj.brand || ""
+    ) || cleanPhrase(source.domain || source.source_id || "");
+
+  if (!name) return null;
+
+  const signal = {
+    brand: brand || safeDomainLabel(source.domain),
+    product: name,
+    hashtag: inferHashtag(name, category, context.country),
+    source_ref: source.domain || source.source_id || source.id || "",
+    source_weight: 1.1,
+    engagement: 3,
+    freshness_boost: 1.2,
+    review_language: context.primary_language,
+    local_evidence: `Real page extraction via JSON-LD from ${source.domain || source.url}`,
+    travel_buyable: true,
+    local_confidence: Math.max(context.local_confidence, 0.82),
+    audience_locale: context.audience_locale,
+    creator_type: inferCreatorType(source),
+    extraction_method: "jsonld_product"
+  };
+
+  return isCategoryValid(signal, category) ? signal : null;
+}
+
+function inferCreatorType(source) {
+  const sourceType = String(source.source_type || "").toLowerCase();
+
+  if (sourceType === "editorial" || sourceType === "local_media") return "local_reviewer";
+  if (sourceType === "community") return "community_reviewer";
+  if (sourceType === "marketplace" || sourceType === "ecommerce") return "shopping_reviewer";
+  return "trend_reviewer";
+}
+
+function inferHashtag(product = "", category = "", country = "") {
+  const p = String(product || "").toLowerCase();
+  const cc = normalizeCountry(country);
+
+  if (category === "snacks_drinks") {
+    if (p.includes("tea")) return cc === "SG" ? "#sgdrinkfinds" : "#localdrinks";
+    if (p.includes("snack") || p.includes("chips")) return cc === "SG" ? "#sgsnackfinds" : "#localsnacks";
+    if (p.includes("laksa") || p.includes("kaya")) return "#localfoodsouvenir";
+    return "#localfoodfinds";
+  }
+
+  if (category === "souvenirs_local_finds") {
+    if (p.includes("craft") || p.includes("handmade")) return "#localcraftfinds";
+    if (p.includes("silk")) return "#localsouvenir";
+    if (p.includes("ceramic")) return "#heritagefinds";
+    return "#giftablefinds";
+  }
+
+  if (category === "fashion_accessories") {
+    if (p.includes("bag") || p.includes("tote") || p.includes("handbag")) return "#localstylefinds";
+    if (p.includes("earring") || p.includes("bracelet") || p.includes("necklace")) return "#accessorytrend";
+    return "#localfashionfinds";
+  }
+
+  return "#localfinds";
+}
+
+function extractCandidatePhrases(html = "", category = "") {
+  const title = cleanPhrase(extractTitle(html));
+  const ogTitle = cleanPhrase(extractMetaContent(html, "og:title"));
+  const description = cleanPhrase(extractMetaContent(html, "description"));
+  const ogDescription = cleanPhrase(extractMetaContent(html, "og:description"));
+  const h1 = extractTagContent(html, /<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const bodyText = stripHtml(html).slice(0, 4000);
+
+  const phrases = [
+    title,
+    ogTitle,
+    description,
+    ogDescription,
+    cleanPhrase(h1)
+  ].filter(Boolean);
+
+  const bodyCandidates = bodyText
+    .split(/[.!?•|]/)
+    .map((x) => cleanPhrase(x))
+    .filter((x) => x.length >= 8 && x.length <= 90);
+
+  for (const part of bodyCandidates) {
+    if (scorePhrase(part, category) >= 3) {
+      phrases.push(part);
+    }
+  }
+
+  return [...new Set(phrases)].slice(0, 20);
+}
+
+function buildSignalFromPhrase(phrase, source, category, context) {
+  const cleaned = cleanPhrase(phrase);
+  if (!cleaned) return null;
+
+  const domainBrand = safeDomainLabel(source.domain || source.source_id || "Local");
+
+  let brand = domainBrand;
+  let product = cleaned;
+
+  if (cleaned.includes("|")) {
+    const parts = cleaned.split("|").map((x) => cleanPhrase(x)).filter(Boolean);
+    if (parts.length >= 2) {
+      brand = parts[0];
+      product = parts[1];
+    }
+  } else if (cleaned.includes(" - ")) {
+    const parts = cleaned.split(" - ").map((x) => cleanPhrase(x)).filter(Boolean);
+    if (parts.length >= 2) {
+      brand = parts[0];
+      product = parts[1];
+    }
+  }
+
+  const signal = {
+    brand: brand || domainBrand,
+    product,
+    hashtag: inferHashtag(product, category, context.country),
+    source_ref: source.domain || source.source_id || source.id || "",
+    source_weight: 1,
+    engagement: 2,
+    freshness_boost: 1,
+    review_language: context.primary_language,
+    local_evidence: `Real page extraction from title/meta/text of ${source.domain || source.url}`,
+    travel_buyable: true,
+    local_confidence: Math.max(context.local_confidence - 0.08, 0.75),
+    audience_locale: context.audience_locale,
+    creator_type: inferCreatorType(source),
+    extraction_method: "html_phrase"
+  };
+
+  return isCategoryValid(signal, category) ? signal : null;
+}
+
+function getFallbackSignals(source, category, country) {
+  const cc = normalizeCountry(country);
+  const context = {
+    ...getCountryLanguageProfile(cc),
+    country: cc
+  };
+
+  const fallbackMap = {
+    snacks_drinks: {
+      TH: [
+        { brand: "Pocky Thailand", product: "Thai Milk Tea Flavor" },
+        { brand: "Tao Kae Noi", product: "Seaweed Snacks" },
+        { brand: "Ichitan", product: "Green Tea Drink" }
+      ],
+      SG: [
+        { brand: "Irvins", product: "Salted Egg Snacks" },
+        { brand: "TWG", product: "Tea Gift Sets" },
+        { brand: "Old Chang Kee", product: "Snack Packs" }
+      ]
+    },
+    souvenirs_local_finds: {
+      TH: [
+        { brand: "Chatuchak Market", product: "Handmade Crafts" },
+        { brand: "Thai Silk", product: "Scarves" },
+        { brand: "Benjarong", product: "Ceramic Tableware" }
+      ]
+    },
+    fashion_accessories: {
+      TH: [
+        { brand: "Gentlewoman", product: "Canvas Tote Bag" },
+        { brand: "Naraya", product: "Mini Handbag" },
+        { brand: "Chatuchak Fashion", product: "Statement Earrings" }
+      ]
+    }
+  };
+
+  const set =
+    (fallbackMap[category] && fallbackMap[category][cc]) ||
+    (fallbackMap[category] && fallbackMap[category].TH) ||
+    [];
+
+  return set.map((item) => ({
+    brand: item.brand,
+    product: item.product,
+    hashtag: inferHashtag(item.product, category, cc),
+    source_ref: source.domain || source.source_id || source.id || "",
+    source_weight: 0.9,
+    engagement: 1,
+    freshness_boost: 1,
+    review_language: context.primary_language,
+    local_evidence: `Fallback extraction used for ${source.domain || source.url}`,
+    travel_buyable: true,
+    local_confidence: 0.7,
+    audience_locale: context.audience_locale,
+    creator_type: inferCreatorType(source),
+    extraction_method: "fallback"
+  }));
+}
+
+async function extractSignalsFromSource(source, category, country) {
+  const cc = normalizeCountry(country);
+  const context = {
+    ...getCountryLanguageProfile(cc),
+    country: cc
+  };
+
+  const fetchResult = await fetchHtml(source.url || "");
+
+  if (!fetchResult.ok || !fetchResult.html) {
+    return getFallbackSignals(source, category, cc);
+  }
+
+  const html = fetchResult.html;
+  const detectedLanguage = inferLanguageFromHtml(html, context.primary_language);
+  const adjustedContext = {
+    ...context,
+    primary_language: detectedLanguage || context.primary_language
+  };
+
+  const jsonLdBlocks = flattenJsonLd(extractJsonLdBlocks(html));
+  const jsonLdSignals = jsonLdBlocks
+    .map((obj) => candidateFromJsonLdObject(obj, source, category, adjustedContext))
+    .filter(Boolean);
+
+  const phraseSignals = extractCandidatePhrases(html, category)
+    .map((phrase) => buildSignalFromPhrase(phrase, source, category, adjustedContext))
+    .filter(Boolean);
+
+  const combined = [...jsonLdSignals, ...phraseSignals];
+
+  const deduped = [];
+  const seen = new Set();
+
+  for (const item of combined) {
+    const key = `${item.brand}__${item.product}__${item.hashtag}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+
+  if (deduped.length > 0) {
+    return deduped.slice(0, 5);
+  }
+
+  return getFallbackSignals(source, category, cc);
 }
 
 async function runSourceSignalScan({ country, category }) {
@@ -330,7 +544,7 @@ async function runSourceSignalScan({ country, category }) {
   const batch = db.batch();
 
   for (const source of sources) {
-    const extracted = extractSignalsFromSource(source, normalizedCategory, normalizedCountry)
+    const extracted = (await extractSignalsFromSource(source, normalizedCategory, normalizedCountry))
       .filter((signal) => isCategoryValid(signal, normalizedCategory));
 
     totalSignals = totalSignals.concat(extracted);
@@ -341,7 +555,6 @@ async function runSourceSignalScan({ country, category }) {
     const prevSignalCount = Number(source.memory_signal_count || 0);
 
     const isUseful = signalCount > 0;
-
     const newSuccess = isUseful ? successCount + 1 : successCount;
     const newFail = !isUseful ? failCount + 1 : failCount;
 
