@@ -33,6 +33,65 @@ function scoreSignal({ sourceWeight = 1, engagement = 1, freshnessBoost = 1 }) {
   return Math.round(sourceWeight * engagement * freshnessBoost * 10);
 }
 
+function isCategoryValidSignal({ brand, product, hashtag }, category) {
+  const cat = normalizeCategory(category).toLowerCase();
+  const text = `${brand} ${product} ${hashtag}`.toLowerCase();
+
+  if (cat === "snacks_drinks") {
+    return (
+      text.includes("tea") ||
+      text.includes("drink") ||
+      text.includes("snack") ||
+      text.includes("noodle") ||
+      text.includes("milk") ||
+      text.includes("food") ||
+      text.includes("flavor") ||
+      text.includes("seaweed") ||
+      text.includes("yogurt") ||
+      text.includes("juice") ||
+      text.includes("coffee") ||
+      text.includes("soda") ||
+      text.includes("dessert") ||
+      text.includes("ice cream") ||
+      text.includes("chips") ||
+      text.includes("candy")
+    );
+  }
+
+  if (cat === "souvenirs_local_finds") {
+    return (
+      text.includes("souvenir") ||
+      text.includes("craft") ||
+      text.includes("gift") ||
+      text.includes("silk") ||
+      text.includes("ceramic") ||
+      text.includes("tableware") ||
+      text.includes("bag") ||
+      text.includes("local") ||
+      text.includes("market") ||
+      text.includes("handmade")
+    );
+  }
+
+  if (cat === "fashion_accessories") {
+    return (
+      text.includes("bag") ||
+      text.includes("wallet") ||
+      text.includes("earring") ||
+      text.includes("fashion") ||
+      text.includes("accessories") ||
+      text.includes("tote") ||
+      text.includes("handbag") ||
+      text.includes("style") ||
+      text.includes("jewelry") ||
+      text.includes("bracelet") ||
+      text.includes("necklace")
+    );
+  }
+
+  return true;
+}
+
 async function ingestSignals({
   country,
   category,
@@ -48,11 +107,26 @@ async function ingestSignals({
 
   const batch = db.batch();
   const results = [];
+  let skipped_count = 0;
+  const skipped = [];
 
   for (const raw of signals) {
     const brand = normalizeText(raw.brand);
     const product = normalizeText(raw.product);
     const hashtag = normalizeText(raw.hashtag);
+
+    // 🚨 CATEGORY GUARDRAIL
+    if (!isCategoryValidSignal({ brand, product, hashtag }, normalizedCategory)) {
+      skipped_count++;
+      skipped.push({
+        brand,
+        product,
+        hashtag,
+        reason: "off_category_signal"
+      });
+      continue;
+    }
+
     const sourceWeight = Number(raw.source_weight || 1);
     const engagement = Number(raw.engagement || 1);
     const freshnessBoost = Number(raw.freshness_boost || 1);
@@ -128,6 +202,8 @@ async function ingestSignals({
     country: normalizedCountry,
     category: normalizedCategory,
     ingested_count: results.length,
+    skipped_count,
+    skipped: skipped.slice(0, 20),
     results
   };
 }

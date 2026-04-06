@@ -59,7 +59,7 @@ function computeSourceTypeScore(sourceTypes = []) {
   let score = 0;
   if (set.has("manual_seed")) score += 5;
   if (set.has("source_scan")) score += 15;
-if (set.has("social_signal")) score += 20; // 🔥 NEW
+  if (set.has("social_signal")) score += 20;
 
   return score;
 }
@@ -88,6 +88,65 @@ function computeTrendStatus(score) {
   return "LOW_SIGNAL";
 }
 
+function isCategoryValidMemory(row, category) {
+  const cat = normalizeCategory(category).toLowerCase();
+  const text = `${row.brand || ""} ${row.product || ""} ${row.hashtag || ""}`.toLowerCase();
+
+  if (cat === "snacks_drinks") {
+    return (
+      text.includes("tea") ||
+      text.includes("drink") ||
+      text.includes("snack") ||
+      text.includes("noodle") ||
+      text.includes("milk") ||
+      text.includes("food") ||
+      text.includes("flavor") ||
+      text.includes("seaweed") ||
+      text.includes("yogurt") ||
+      text.includes("juice") ||
+      text.includes("coffee") ||
+      text.includes("soda") ||
+      text.includes("dessert") ||
+      text.includes("ice cream") ||
+      text.includes("chips") ||
+      text.includes("candy")
+    );
+  }
+
+  if (cat === "souvenirs_local_finds") {
+    return (
+      text.includes("souvenir") ||
+      text.includes("craft") ||
+      text.includes("gift") ||
+      text.includes("silk") ||
+      text.includes("ceramic") ||
+      text.includes("tableware") ||
+      text.includes("bag") ||
+      text.includes("local") ||
+      text.includes("market") ||
+      text.includes("handmade")
+    );
+  }
+
+  if (cat === "fashion_accessories") {
+    return (
+      text.includes("bag") ||
+      text.includes("wallet") ||
+      text.includes("earring") ||
+      text.includes("fashion") ||
+      text.includes("accessories") ||
+      text.includes("tote") ||
+      text.includes("handbag") ||
+      text.includes("style") ||
+      text.includes("jewelry") ||
+      text.includes("bracelet") ||
+      text.includes("necklace")
+    );
+  }
+
+  return true;
+}
+
 async function runTrendScoring({
   country,
   category,
@@ -109,10 +168,12 @@ async function runTrendScoring({
     .where("category", "==", normalizedCategory)
     .get();
 
-  const memoryRows = snap.docs.map((doc) => ({
-    id: doc.id,
-    ...doc.data()
-  }));
+  const memoryRows = snap.docs
+    .map((doc) => ({
+      id: doc.id,
+      ...doc.data()
+    }))
+    .filter((row) => isCategoryValidMemory(row, normalizedCategory));
 
   const ranked = memoryRows
     .map((row) => {
