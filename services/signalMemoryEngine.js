@@ -54,7 +54,9 @@ function isCategoryValidSignal({ brand, product, hashtag }, category) {
       text.includes("dessert") ||
       text.includes("ice cream") ||
       text.includes("chips") ||
-      text.includes("candy")
+      text.includes("candy") ||
+      text.includes("laksa") ||
+      text.includes("kaya")
     );
   }
 
@@ -93,6 +95,115 @@ function isCategoryValidSignal({ brand, product, hashtag }, category) {
   return true;
 }
 
+function uniqStrings(values = []) {
+  return [...new Set(values.map((x) => normalizeText(x)).filter(Boolean))];
+}
+
+async function upsertMemoryDoc({
+  memoryKey,
+  normalizedCountry,
+  normalizedCategory,
+  brand,
+  product,
+  hashtag,
+  signalScore,
+  sourceType,
+  reviewLanguage,
+  localEvidence,
+  travelBuyable,
+  localConfidence,
+  audienceLocale,
+  creatorType
+}) {
+  const memoryRef = db.collection("signal_memory").doc(memoryKey);
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(memoryRef);
+    const existing = snap.exists ? snap.data() || {} : {};
+
+    const existingReviewLanguages = Array.isArray(existing.review_languages)
+      ? existing.review_languages
+      : [];
+    const existingEvidence = Array.isArray(existing.local_evidence_samples)
+      ? existing.local_evidence_samples
+      : [];
+    const existingCreatorTypes = Array.isArray(existing.creator_types)
+      ? existing.creator_types
+      : [];
+    const existingSourceTypes = Array.isArray(existing.source_types)
+      ? existing.source_types
+      : [];
+
+    const nextReviewLanguages = uniqStrings([
+      ...existingReviewLanguages,
+      reviewLanguage
+    ]);
+
+    const nextEvidence = uniqStrings([
+      ...existingEvidence,
+      localEvidence
+    ]);
+
+    const nextCreatorTypes = uniqStrings([
+      ...existingCreatorTypes,
+      creatorType
+    ]);
+
+    const nextSourceTypes = uniqStrings([
+      ...existingSourceTypes,
+      sourceType
+    ]);
+
+    const existingMentions = Number(existing.total_mentions || 0);
+    const existingCumulative = Number(existing.cumulative_score || 0);
+    const existingMaxLocalConfidence = Number(existing.max_local_confidence || 0);
+
+    const nextMaxLocalConfidence = Math.max(
+      existingMaxLocalConfidence,
+      Number(localConfidence || 0)
+    );
+
+    const nextTravelBuyable =
+      existing.travel_buyable === true || travelBuyable === true;
+
+    const nextLatestReviewLanguage =
+      reviewLanguage || existing.latest_review_language || null;
+
+    const nextLatestAudienceLocale =
+      audienceLocale || existing.latest_audience_locale || null;
+
+    tx.set(
+      memoryRef,
+      {
+        memory_key: memoryKey,
+        country: normalizedCountry,
+        category: normalizedCategory,
+        brand,
+        product,
+        hashtag,
+
+        total_mentions: existingMentions + 1,
+        cumulative_score: existingCumulative + signalScore,
+        last_signal_score: signalScore,
+
+        source_types: nextSourceTypes,
+        review_languages: nextReviewLanguages,
+        local_evidence_samples: nextEvidence,
+        creator_types: nextCreatorTypes,
+
+        latest_review_language: nextLatestReviewLanguage,
+        latest_audience_locale: nextLatestAudienceLocale,
+        travel_buyable: nextTravelBuyable,
+        max_local_confidence: nextMaxLocalConfidence,
+
+        last_seen_at: FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+  });
+}
+
 async function ingestSignals({
   country,
   category,
@@ -110,6 +221,8 @@ async function ingestSignals({
   const results = [];
   let skipped_count = 0;
   const skipped = [];
+
+  const memoryOps = [];
 
   for (const raw of signals) {
     const brand = normalizeText(raw.brand);
@@ -130,6 +243,7 @@ async function ingestSignals({
     const sourceWeight = Number(raw.source_weight || 1);
     const engagement = Number(raw.engagement || 1);
     const freshnessBoost = Number(raw.freshness_boost || 1);
+
     const reviewLanguage = normalizeText(raw.review_language || "");
     const localEvidence = normalizeText(raw.local_evidence || "");
     const travelBuyable = raw.travel_buyable !== false;
@@ -176,40 +290,24 @@ async function ingestSignals({
       created_at: FieldValue.serverTimestamp()
     });
 
-    const memoryRef = db.collection("signal_memory").doc(memoryKey);
-
-    const memoryPayload = {
-      memory_key: memoryKey,
-      country: normalizedCountry,
-      category: normalizedCategory,
-      brand,
-      product,
-      hashtag,
-      total_mentions: FieldValue.increment(1),
-      cumulative_score: FieldValue.increment(signalScore),
-      last_signal_score: signalScore,
-      source_types: FieldValue.arrayUnion(sourceType),
-      last_seen_at: FieldValue.serverTimestamp(),
-      updated_at: FieldValue.serverTimestamp(),
-      travel_buyable: travelBuyable,
-      max_local_confidence: Math.max(0, Math.min(1, localConfidence || 0)),
-      latest_review_language: reviewLanguage || null,
-      latest_audience_locale: audienceLocale || null
-    };
-
-    if (reviewLanguage) {
-      memoryPayload.review_languages = FieldValue.arrayUnion(reviewLanguage);
-    }
-
-    if (localEvidence) {
-      memoryPayload.local_evidence_samples = FieldValue.arrayUnion(localEvidence);
-    }
-
-    if (creatorType) {
-      memoryPayload.creator_types = FieldValue.arrayUnion(creatorType);
-    }
-
-    batch.set(memoryRef, memoryPayload, { merge: true });
+    memoryOps.push(
+      upsertMemoryDoc({
+        memoryKey,
+        normalizedCountry,
+        normalizedCategory,
+        brand,
+        product,
+        hashtag,
+        signalScore,
+        sourceType,
+        reviewLanguage,
+        localEvidence,
+        travelBuyable,
+        localConfidence,
+        audienceLocale,
+        creatorType
+      })
+    );
 
     results.push({
       event_id: eventId,
@@ -225,6 +323,7 @@ async function ingestSignals({
   }
 
   await batch.commit();
+  await Promise.all(memoryOps);
 
   return {
     ok: true,
