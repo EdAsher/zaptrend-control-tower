@@ -17,6 +17,10 @@ function normalizeCategory(value) {
   return String(value || "").trim();
 }
 
+function normalizeText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
 function getCountryLanguageProfile(country) {
   const cc = normalizeCountry(country);
 
@@ -138,26 +142,41 @@ function cleanPhrase(value = "") {
     .trim();
 }
 
-function scorePhrase(phrase = "", category = "") {
-  const text = phrase.toLowerCase();
-  let score = 0;
+function inferCreatorType(source) {
+  const sourceType = String(source.source_type || "").toLowerCase();
+
+  if (sourceType === "editorial" || sourceType === "local_media") return "local_reviewer";
+  if (sourceType === "community") return "community_reviewer";
+  if (sourceType === "marketplace" || sourceType === "ecommerce") return "shopping_reviewer";
+  return "trend_reviewer";
+}
+
+function inferHashtag(product = "", category = "", country = "") {
+  const p = String(product || "").toLowerCase();
+  const cc = normalizeCountry(country);
 
   if (category === "snacks_drinks") {
-    if (/(snack|drink|tea|coffee|milk|juice|seaweed|noodle|flavor|soda|laksa|kaya|chips|candy|yogurt|food)/i.test(text)) score += 3;
-    if (/(limited|exclusive|local|popular|best|viral|gift|souvenir)/i.test(text)) score += 1;
+    if (p.includes("tea")) return cc === "SG" ? "#sgdrinkfinds" : "#localdrinks";
+    if (p.includes("snack") || p.includes("chips")) return cc === "SG" ? "#sgsnackfinds" : "#localsnacks";
+    if (p.includes("laksa") || p.includes("kaya")) return "#localfoodsouvenir";
+    return "#localfoodfinds";
   }
 
   if (category === "souvenirs_local_finds") {
-    if (/(souvenir|gift|craft|artisan|handmade|silk|ceramic|tableware|market|local|heritage|culture|scarf|bag)/i.test(text)) score += 3;
-    if (/(exclusive|traditional|authentic|local|bangkok|chiang mai|thai)/i.test(text)) score += 1;
+    if (p.includes("craft") || p.includes("handmade")) return "#localcraftfinds";
+    if (p.includes("silk")) return "#localsouvenir";
+    if (p.includes("ceramic")) return "#heritagefinds";
+    if (p.includes("bag")) return "#giftablefinds";
+    return "#giftablefinds";
   }
 
   if (category === "fashion_accessories") {
-    if (/(bag|wallet|earring|bracelet|necklace|tote|handbag|accessories|fashion|style|jewelry)/i.test(text)) score += 3;
-    if (/(trend|viral|local|designer|minimal|edit)/i.test(text)) score += 1;
+    if (p.includes("bag") || p.includes("tote") || p.includes("handbag")) return "#localstylefinds";
+    if (p.includes("earring") || p.includes("bracelet") || p.includes("necklace")) return "#accessorytrend";
+    return "#localfashionfinds";
   }
 
-  return score;
+  return "#localfinds";
 }
 
 function isCategoryValid(signal, category) {
@@ -209,11 +228,36 @@ function isCategoryValid(signal, category) {
       text.includes("accessories") ||
       text.includes("tote") ||
       text.includes("handbag") ||
-      text.includes("style")
+      text.includes("style") ||
+      text.includes("jewelry") ||
+      text.includes("bracelet") ||
+      text.includes("necklace")
     );
   }
 
   return true;
+}
+
+function scorePhrase(phrase = "", category = "") {
+  const text = phrase.toLowerCase();
+  let score = 0;
+
+  if (category === "snacks_drinks") {
+    if (/(snack|drink|tea|coffee|milk|juice|seaweed|noodle|flavor|soda|laksa|kaya|chips|candy|yogurt|food)/i.test(text)) score += 3;
+    if (/(limited|exclusive|local|popular|best|viral|gift|souvenir)/i.test(text)) score += 1;
+  }
+
+  if (category === "souvenirs_local_finds") {
+    if (/(souvenir|gift|craft|artisan|handmade|silk|ceramic|tableware|market|local|heritage|culture|scarf|bag)/i.test(text)) score += 3;
+    if (/(exclusive|traditional|authentic|local|bangkok|chiang mai|thai)/i.test(text)) score += 1;
+  }
+
+  if (category === "fashion_accessories") {
+    if (/(bag|wallet|earring|bracelet|necklace|tote|handbag|accessories|fashion|style|jewelry)/i.test(text)) score += 3;
+    if (/(trend|viral|local|designer|minimal|edit)/i.test(text)) score += 1;
+  }
+
+  return score;
 }
 
 async function fetchHtml(url) {
@@ -229,7 +273,7 @@ async function fetchHtml(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0A-hotfix",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0B",
         accept: "text/html,application/xhtml+xml"
       }
     });
@@ -294,40 +338,34 @@ function flattenJsonLd(items) {
   return out;
 }
 
-function inferCreatorType(source) {
-  const sourceType = String(source.source_type || "").toLowerCase();
+function buildRealSignal({
+  brand,
+  product,
+  source,
+  category,
+  context,
+  method,
+  confidenceBoost = 0.82,
+  localEvidence = ""
+}) {
+  const signal = {
+    brand: normalizeText(brand) || safeDomainLabel(source.domain),
+    product: normalizeText(product),
+    hashtag: inferHashtag(product, category, context.country),
+    source_ref: source.domain || source.source_id || source.id || "",
+    source_weight: method === "jsonld_product" ? 1.15 : 1.0,
+    engagement: method === "jsonld_product" ? 3 : 2,
+    freshness_boost: method === "jsonld_product" ? 1.2 : 1,
+    review_language: context.primary_language,
+    local_evidence: localEvidence || `Real extraction from ${source.domain || source.url}`,
+    travel_buyable: true,
+    local_confidence: Math.max(context.local_confidence, confidenceBoost),
+    audience_locale: context.audience_locale,
+    creator_type: inferCreatorType(source),
+    extraction_method: method
+  };
 
-  if (sourceType === "editorial" || sourceType === "local_media") return "local_reviewer";
-  if (sourceType === "community") return "community_reviewer";
-  if (sourceType === "marketplace" || sourceType === "ecommerce") return "shopping_reviewer";
-  return "trend_reviewer";
-}
-
-function inferHashtag(product = "", category = "", country = "") {
-  const p = String(product || "").toLowerCase();
-  const cc = normalizeCountry(country);
-
-  if (category === "snacks_drinks") {
-    if (p.includes("tea")) return cc === "SG" ? "#sgdrinkfinds" : "#localdrinks";
-    if (p.includes("snack") || p.includes("chips")) return cc === "SG" ? "#sgsnackfinds" : "#localsnacks";
-    if (p.includes("laksa") || p.includes("kaya")) return "#localfoodsouvenir";
-    return "#localfoodfinds";
-  }
-
-  if (category === "souvenirs_local_finds") {
-    if (p.includes("craft") || p.includes("handmade")) return "#localcraftfinds";
-    if (p.includes("silk")) return "#localsouvenir";
-    if (p.includes("ceramic")) return "#heritagefinds";
-    return "#giftablefinds";
-  }
-
-  if (category === "fashion_accessories") {
-    if (p.includes("bag") || p.includes("tote") || p.includes("handbag")) return "#localstylefinds";
-    if (p.includes("earring") || p.includes("bracelet") || p.includes("necklace")) return "#accessorytrend";
-    return "#localfashionfinds";
-  }
-
-  return "#localfinds";
+  return isCategoryValid(signal, category) ? signal : null;
 }
 
 function candidateFromJsonLdObject(obj, source, category, context) {
@@ -338,28 +376,20 @@ function candidateFromJsonLdObject(obj, source, category, context) {
   const brand =
     cleanPhrase(
       typeof obj.brand === "object" ? obj.brand?.name || "" : obj.brand || ""
-    ) || cleanPhrase(source.domain || source.source_id || "");
+    ) || safeDomainLabel(source.domain);
 
-  if (!name) return null;
+  if (!name || name.length < 3) return null;
 
-  const signal = {
-    brand: brand || safeDomainLabel(source.domain),
+  return buildRealSignal({
+    brand,
     product: name,
-    hashtag: inferHashtag(name, category, context.country),
-    source_ref: source.domain || source.source_id || source.id || "",
-    source_weight: 1.1,
-    engagement: 3,
-    freshness_boost: 1.2,
-    review_language: context.primary_language,
-    local_evidence: `Real page extraction via JSON-LD from ${source.domain || source.url}`,
-    travel_buyable: true,
-    local_confidence: Math.max(context.local_confidence, 0.82),
-    audience_locale: context.audience_locale,
-    creator_type: inferCreatorType(source),
-    extraction_method: "jsonld_product"
-  };
-
-  return isCategoryValid(signal, category) ? signal : null;
+    source,
+    category,
+    context,
+    method: "jsonld_product",
+    confidenceBoost: 0.85,
+    localEvidence: `Real page extraction via JSON-LD from ${source.domain || source.url}`
+  });
 }
 
 function extractCandidatePhrases(html = "", category = "") {
@@ -367,73 +397,94 @@ function extractCandidatePhrases(html = "", category = "") {
   const ogTitle = cleanPhrase(extractMetaContent(html, "og:title"));
   const description = cleanPhrase(extractMetaContent(html, "description"));
   const ogDescription = cleanPhrase(extractMetaContent(html, "og:description"));
-  const h1 = extractTagContent(html, /<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const h1 = cleanPhrase(extractTagContent(html, /<h1[^>]*>([\s\S]*?)<\/h1>/i));
+  const h2s = [...String(html || "").matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)]
+    .map((m) => cleanPhrase(m[1] || ""))
+    .filter(Boolean)
+    .slice(0, 5);
+
   const bodyText = stripHtml(html).slice(0, MAX_BODY_TEXT_CHARS);
 
-  const phrases = [
-    title,
-    ogTitle,
-    description,
-    ogDescription,
-    cleanPhrase(h1)
-  ].filter(Boolean);
+  const phrases = [title, ogTitle, description, ogDescription, h1, ...h2s]
+    .filter(Boolean)
+    .filter((x) => x.length >= 4 && x.length <= 120);
 
   const bodyCandidates = bodyText
     .split(/[.!?•|]/)
     .map((x) => cleanPhrase(x))
-    .filter((x) => x.length >= 8 && x.length <= 80);
+    .filter((x) => x.length >= 10 && x.length <= 90);
 
   for (const part of bodyCandidates) {
     if (scorePhrase(part, category) >= 3) {
       phrases.push(part);
     }
-    if (phrases.length >= 12) break;
+    if (phrases.length >= 16) break;
   }
 
-  return [...new Set(phrases)].slice(0, 12);
+  return [...new Set(phrases)].slice(0, 16);
+}
+
+function extractBrandProductFromPhrase(phrase = "", source = {}) {
+  const cleaned = cleanPhrase(phrase);
+  const domainBrand = safeDomainLabel(source.domain || source.source_id || "Local");
+
+  let brand = domainBrand;
+  let product = cleaned;
+
+  const separators = [" | ", " - ", " – ", ": "];
+
+  for (const sep of separators) {
+    if (cleaned.includes(sep)) {
+      const parts = cleaned.split(sep).map((x) => cleanPhrase(x)).filter(Boolean);
+      if (parts.length >= 2) {
+        const left = parts[0];
+        const right = parts.slice(1).join(" ");
+
+        if (left.length <= 40 && right.length >= 4) {
+          brand = left;
+          product = right;
+          return { brand, product };
+        }
+      }
+    }
+  }
+
+  return { brand, product };
 }
 
 function buildSignalFromPhrase(phrase, source, category, context) {
   const cleaned = cleanPhrase(phrase);
   if (!cleaned) return null;
 
-  const domainBrand = safeDomainLabel(source.domain || source.source_id || "Local");
+  const { brand, product } = extractBrandProductFromPhrase(cleaned, source);
 
-  let brand = domainBrand;
-  let product = cleaned;
+  if (!product || product.length < 4) return null;
+  if (product.length > 110) return null;
 
-  if (cleaned.includes("|")) {
-    const parts = cleaned.split("|").map((x) => cleanPhrase(x)).filter(Boolean);
-    if (parts.length >= 2) {
-      brand = parts[0];
-      product = parts[1];
-    }
-  } else if (cleaned.includes(" - ")) {
-    const parts = cleaned.split(" - ").map((x) => cleanPhrase(x)).filter(Boolean);
-    if (parts.length >= 2) {
-      brand = parts[0];
-      product = parts[1];
-    }
+  return buildRealSignal({
+    brand,
+    product,
+    source,
+    category,
+    context,
+    method: "html_phrase",
+    confidenceBoost: 0.76,
+    localEvidence: `Real page extraction from title/meta/headings of ${source.domain || source.url}`
+  });
+}
+
+function dedupeSignals(signals = []) {
+  const out = [];
+  const seen = new Set();
+
+  for (const item of signals) {
+    const key = `${normalizeText(item.brand).toLowerCase()}__${normalizeText(item.product).toLowerCase()}`;
+    if (!item.product || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
   }
 
-  const signal = {
-    brand: brand || domainBrand,
-    product,
-    hashtag: inferHashtag(product, category, context.country),
-    source_ref: source.domain || source.source_id || source.id || "",
-    source_weight: 1,
-    engagement: 2,
-    freshness_boost: 1,
-    review_language: context.primary_language,
-    local_evidence: `Real page extraction from title/meta/text of ${source.domain || source.url}`,
-    travel_buyable: true,
-    local_confidence: Math.max(context.local_confidence - 0.08, 0.75),
-    audience_locale: context.audience_locale,
-    creator_type: inferCreatorType(source),
-    extraction_method: "html_phrase"
-  };
-
-  return isCategoryValid(signal, category) ? signal : null;
+  return out;
 }
 
 function getFallbackSignals(source, category, country) {
@@ -477,22 +528,18 @@ function getFallbackSignals(source, category, country) {
     (fallbackMap[category] && fallbackMap[category].TH) ||
     [];
 
-  return set.slice(0, MAX_SIGNALS_PER_SOURCE).map((item) => ({
-    brand: item.brand,
-    product: item.product,
-    hashtag: inferHashtag(item.product, category, cc),
-    source_ref: source.domain || source.source_id || source.id || "",
-    source_weight: 0.9,
-    engagement: 1,
-    freshness_boost: 1,
-    review_language: context.primary_language,
-    local_evidence: `Fallback extraction used for ${source.domain || source.url}`,
-    travel_buyable: true,
-    local_confidence: 0.7,
-    audience_locale: context.audience_locale,
-    creator_type: inferCreatorType(source),
-    extraction_method: "fallback"
-  }));
+  return set.slice(0, MAX_SIGNALS_PER_SOURCE).map((item) =>
+    buildRealSignal({
+      brand: item.brand,
+      product: item.product,
+      source,
+      category,
+      context,
+      method: "fallback",
+      confidenceBoost: 0.7,
+      localEvidence: `Fallback extraction used for ${source.domain || source.url}`
+    })
+  ).filter(Boolean);
 }
 
 async function extractSignalsFromSource(source, category, country) {
@@ -515,30 +562,26 @@ async function extractSignalsFromSource(source, category, country) {
     primary_language: detectedLanguage || context.primary_language
   };
 
-  const jsonLdBlocks = flattenJsonLd(extractJsonLdBlocks(html));
-  const jsonLdSignals = jsonLdBlocks
-    .map((obj) => candidateFromJsonLdObject(obj, source, category, adjustedContext))
-    .filter(Boolean);
+  const jsonLdSignals = dedupeSignals(
+    flattenJsonLd(extractJsonLdBlocks(html))
+      .map((obj) => candidateFromJsonLdObject(obj, source, category, adjustedContext))
+      .filter(Boolean)
+  );
 
-  const phraseSignals = extractCandidatePhrases(html, category)
-    .map((phrase) => buildSignalFromPhrase(phrase, source, category, adjustedContext))
-    .filter(Boolean);
-
-  const combined = [...jsonLdSignals, ...phraseSignals];
-
-  const deduped = [];
-  const seen = new Set();
-
-  for (const item of combined) {
-    const key = `${item.brand}__${item.product}__${item.hashtag}`.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(item);
-    if (deduped.length >= MAX_SIGNALS_PER_SOURCE) break;
+  if (jsonLdSignals.length >= 2) {
+    return jsonLdSignals.slice(0, MAX_SIGNALS_PER_SOURCE);
   }
 
-  if (deduped.length > 0) {
-    return deduped;
+  const phraseSignals = dedupeSignals(
+    extractCandidatePhrases(html, category)
+      .map((phrase) => buildSignalFromPhrase(phrase, source, category, adjustedContext))
+      .filter(Boolean)
+  );
+
+  const combined = dedupeSignals([...jsonLdSignals, ...phraseSignals]);
+
+  if (combined.length > 0) {
+    return combined.slice(0, MAX_SIGNALS_PER_SOURCE);
   }
 
   return getFallbackSignals(source, category, cc);
@@ -593,7 +636,7 @@ async function runSourceSignalScan({ country, category }) {
     CONCURRENCY
   );
 
-  let totalSignals = extractedGroups.flat().slice(0, MAX_TOTAL_SIGNALS);
+  const totalSignals = dedupeSignals(extractedGroups.flat()).slice(0, MAX_TOTAL_SIGNALS);
 
   const batch = db.batch();
 
