@@ -22,6 +22,107 @@ function buildRunId(prefix = "socialrun") {
   return `${prefix}_${stamp}_${rand}`;
 }
 
+function getCountryLanguageProfile(country) {
+  const cc = normalizeCountry(country);
+
+  const map = {
+    TH: {
+      primary_language: "th",
+      allowed_languages: ["th", "en"],
+      local_audience_note:
+        "Prioritize Thai-language creators, Thai comments, Thai captions, and Thai-native reviewers. English-only foreign reviewers should not dominate the trend signal.",
+      reviewer_constraint:
+        "Prefer Thai local creators reviewing Thai local items for Thai audiences."
+    },
+    SG: {
+      primary_language: "en",
+      allowed_languages: ["en", "zh", "ms"],
+      local_audience_note:
+        "Prioritize Singapore-local reviewers, Singapore food/media accounts, and posts relevant to Singapore shoppers.",
+      reviewer_constraint:
+        "Prefer Singapore-local creators and local shopper/reviewer behavior."
+    },
+    MY: {
+      primary_language: "ms",
+      allowed_languages: ["ms", "en", "zh"],
+      local_audience_note:
+        "Prioritize Malaysia-local reviewers, Malay or locally used languages, and local shopper behavior.",
+      reviewer_constraint:
+        "Prefer Malaysia-local creators reviewing items relevant to Malaysia audiences."
+    },
+    JP: {
+      primary_language: "ja",
+      allowed_languages: ["ja", "en"],
+      local_audience_note:
+        "Prioritize Japanese-language creators and Japan-local reviews.",
+      reviewer_constraint:
+        "Prefer Japan-local creators speaking to Japan audiences."
+    },
+    KR: {
+      primary_language: "ko",
+      allowed_languages: ["ko", "en"],
+      local_audience_note:
+        "Prioritize Korean-language creators and Korea-local reviews.",
+      reviewer_constraint:
+        "Prefer Korea-local creators speaking to Korea audiences."
+    },
+    VN: {
+      primary_language: "vi",
+      allowed_languages: ["vi", "en"],
+      local_audience_note:
+        "Prioritize Vietnamese-language creators and Vietnam-local reviews.",
+      reviewer_constraint:
+        "Prefer Vietnam-local creators speaking to Vietnam audiences."
+    }
+  };
+
+  return (
+    map[cc] || {
+      primary_language: "en",
+      allowed_languages: ["en"],
+      local_audience_note:
+        "Prioritize local reviewers from the target country.",
+      reviewer_constraint:
+        "Prefer country-local creators over foreign/global reviewers."
+    }
+  );
+}
+
+function buildLocalSocialPrompt({ country, category, sources, languageProfile }) {
+  const sourceLines = sources
+    .map(
+      (s, i) =>
+        `${i + 1}. ${s.platform} ${s.handle} | language=${s.source_language} | audience=${s.audience_locale} | creator_type=${s.creator_type}`
+    )
+    .join("\n");
+
+  return `
+You are evaluating LOCAL social signals for marketplace trend discovery.
+
+Country: ${country}
+Category: ${category}
+
+Primary language: ${languageProfile.primary_language}
+Allowed languages: ${languageProfile.allowed_languages.join(", ")}
+
+Important rules:
+- ${languageProfile.local_audience_note}
+- ${languageProfile.reviewer_constraint}
+- Prioritize local-language reviews, local comments, local captions, and local buying behavior.
+- Do NOT over-weight foreign reviewers discussing the market from outside the country.
+- Prefer signals about:
+  - locally made items
+  - exclusive finds
+  - limited-edition local products
+  - giftable items
+  - traveler-buyable / bring-back-able goods
+  - local review buzz
+
+Candidate social source examples:
+${sourceLines}
+`.trim();
+}
+
 function getCategorySocialSources({ country, category }) {
   const cc = normalizeCountry(country);
   const cat = normalizeCategory(category);
@@ -32,18 +133,24 @@ function getCategorySocialSources({ country, category }) {
         {
           source_id: `${cc}_${cat}_tiktok_snacks_th_1`,
           platform: "tiktok",
-          handle: "@bangkoksnackhunt",
+          handle: "@กินไรดีกรุงเทพ",
           url: "https://www.tiktok.com/",
           source_weight: 0.95,
-          creator_type: "food_reviewer"
+          creator_type: "food_reviewer",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.98
         },
         {
           source_id: `${cc}_${cat}_instagram_snacks_th_2`,
           platform: "instagram",
-          handle: "@thaifoodfinds",
+          handle: "@ขนมไทยรีวิว",
           url: "https://www.instagram.com/",
           source_weight: 0.9,
-          creator_type: "local_reviewer"
+          creator_type: "local_reviewer",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.96
         },
         {
           source_id: `${cc}_${cat}_youtube_snacks_th_3`,
@@ -51,7 +158,10 @@ function getCategorySocialSources({ country, category }) {
           handle: "@ThaiSnackRadar",
           url: "https://www.youtube.com/",
           source_weight: 0.85,
-          creator_type: "trend_reviewer"
+          creator_type: "trend_reviewer",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.92
         }
       ],
       SG: [
@@ -61,7 +171,10 @@ function getCategorySocialSources({ country, category }) {
           handle: "@sgsnackfinds",
           url: "https://www.tiktok.com/",
           source_weight: 0.95,
-          creator_type: "food_reviewer"
+          creator_type: "food_reviewer",
+          source_language: "en",
+          audience_locale: "en-SG",
+          local_confidence: 0.95
         },
         {
           source_id: `${cc}_${cat}_instagram_snacks_sg_2`,
@@ -69,7 +182,10 @@ function getCategorySocialSources({ country, category }) {
           handle: "@sgmunchradar",
           url: "https://www.instagram.com/",
           source_weight: 0.9,
-          creator_type: "local_reviewer"
+          creator_type: "local_reviewer",
+          source_language: "en",
+          audience_locale: "en-SG",
+          local_confidence: 0.94
         },
         {
           source_id: `${cc}_${cat}_youtube_snacks_sg_3`,
@@ -77,7 +193,10 @@ function getCategorySocialSources({ country, category }) {
           handle: "@SingaporeSnackWatch",
           url: "https://www.youtube.com/",
           source_weight: 0.85,
-          creator_type: "trend_reviewer"
+          creator_type: "trend_reviewer",
+          source_language: "en",
+          audience_locale: "en-SG",
+          local_confidence: 0.9
         }
       ]
     },
@@ -87,18 +206,24 @@ function getCategorySocialSources({ country, category }) {
         {
           source_id: `${cc}_${cat}_tiktok_souvenir_th_1`,
           platform: "tiktok",
-          handle: "@bangkokgiftfinds",
+          handle: "@ของฝากกรุงเทพ",
           url: "https://www.tiktok.com/",
           source_weight: 0.95,
-          creator_type: "market_reviewer"
+          creator_type: "market_reviewer",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.98
         },
         {
           source_id: `${cc}_${cat}_instagram_souvenir_th_2`,
           platform: "instagram",
-          handle: "@chatuchakfinds",
+          handle: "@ของฝากไทยน่าซื้อ",
           url: "https://www.instagram.com/",
           source_weight: 0.9,
-          creator_type: "local_creator"
+          creator_type: "local_creator",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.96
         },
         {
           source_id: `${cc}_${cat}_youtube_souvenir_th_3`,
@@ -106,7 +231,10 @@ function getCategorySocialSources({ country, category }) {
           handle: "@ThaiSouvenirRadar",
           url: "https://www.youtube.com/",
           source_weight: 0.85,
-          creator_type: "shopping_reviewer"
+          creator_type: "shopping_reviewer",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.92
         }
       ]
     },
@@ -116,10 +244,13 @@ function getCategorySocialSources({ country, category }) {
         {
           source_id: `${cc}_${cat}_tiktok_fashion_th_1`,
           platform: "tiktok",
-          handle: "@bangkokstylefinds",
+          handle: "@แฟชั่นกรุงเทพรีวิว",
           url: "https://www.tiktok.com/",
           source_weight: 0.95,
-          creator_type: "fashion_creator"
+          creator_type: "fashion_creator",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.97
         },
         {
           source_id: `${cc}_${cat}_instagram_fashion_th_2`,
@@ -127,7 +258,10 @@ function getCategorySocialSources({ country, category }) {
           handle: "@thaifashionedit",
           url: "https://www.instagram.com/",
           source_weight: 0.9,
-          creator_type: "style_reviewer"
+          creator_type: "style_reviewer",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.94
         },
         {
           source_id: `${cc}_${cat}_youtube_fashion_th_3`,
@@ -135,7 +269,10 @@ function getCategorySocialSources({ country, category }) {
           handle: "@ThaiAccessoryRadar",
           url: "https://www.youtube.com/",
           source_weight: 0.85,
-          creator_type: "trend_reviewer"
+          creator_type: "trend_reviewer",
+          source_language: "th",
+          audience_locale: "th-TH",
+          local_confidence: 0.9
         }
       ]
     }
@@ -153,7 +290,10 @@ function getCategorySocialSources({ country, category }) {
       handle: "@localtrendwatch",
       url: "https://www.instagram.com/",
       source_weight: 0.8,
-      creator_type: "generic_local_reviewer"
+      creator_type: "generic_local_reviewer",
+      source_language: getCountryLanguageProfile(cc).primary_language,
+      audience_locale: cc,
+      local_confidence: 0.8
     },
     {
       source_id: `${cc}_${cat}_social_generic_2`,
@@ -161,7 +301,10 @@ function getCategorySocialSources({ country, category }) {
       handle: "@localfindsradar",
       url: "https://www.tiktok.com/",
       source_weight: 0.8,
-      creator_type: "generic_local_creator"
+      creator_type: "generic_local_creator",
+      source_language: getCountryLanguageProfile(cc).primary_language,
+      audience_locale: cc,
+      local_confidence: 0.8
     }
   ];
 }
@@ -178,21 +321,33 @@ function getCategoryMentions({ country, category, sources }) {
           product: "Thai Milk Tea Flavor",
           hashtag: "#thaiflavors",
           score: 88,
-          signal_type: "limited_flavor"
+          signal_type: "limited_flavor",
+          review_language: "th",
+          local_evidence:
+            "รีวิวโดยคนไทยพูดถึงรสชาติไทยนมชาและความน่าซื้อกลับ",
+          travel_buyable: true
         },
         {
           brand: "Tao Kae Noi",
           product: "Seaweed Snacks",
           hashtag: "#thaistreetsnack",
           score: 84,
-          signal_type: "viral_snack"
+          signal_type: "viral_snack",
+          review_language: "th",
+          local_evidence:
+            "คอนเทนต์ไทยรีวิวขนมพกง่าย ซื้อฝากได้",
+          travel_buyable: true
         },
         {
           brand: "Ichitan",
           product: "Green Tea Drink",
           hashtag: "#thaidrinks",
           score: 80,
-          signal_type: "drink_trend"
+          signal_type: "drink_trend",
+          review_language: "th",
+          local_evidence:
+            "รีวิวภาษาไทยจากผู้บริโภคไทยในตลาดท้องถิ่น",
+          travel_buyable: true
         }
       ],
       SG: [
@@ -201,21 +356,33 @@ function getCategoryMentions({ country, category, sources }) {
           product: "Salted Egg Snacks",
           hashtag: "#sgsnackfinds",
           score: 90,
-          signal_type: "iconic_local_snack"
+          signal_type: "iconic_local_snack",
+          review_language: "en",
+          local_evidence:
+            "Singapore-local reviewers discussing giftable salted egg snacks",
+          travel_buyable: true
         },
         {
           brand: "TWG",
           product: "Tea Gift Sets",
           hashtag: "#sggiftablefood",
           score: 82,
-          signal_type: "giftable_local_find"
+          signal_type: "giftable_local_find",
+          review_language: "en",
+          local_evidence:
+            "Singapore reviewers highlighting premium tea sets as bring-back gifts",
+          travel_buyable: true
         },
         {
           brand: "Old Chang Kee",
           product: "Snack Packs",
           hashtag: "#sgbites",
           score: 78,
-          signal_type: "local_favorite"
+          signal_type: "local_favorite",
+          review_language: "en",
+          local_evidence:
+            "Singapore local snack reviewers mentioning easy-to-share snack packs",
+          travel_buyable: true
         }
       ]
     },
@@ -227,21 +394,33 @@ function getCategoryMentions({ country, category, sources }) {
           product: "Handmade Crafts",
           hashtag: "#bangkoksouvenir",
           score: 90,
-          signal_type: "artisan_local_find"
+          signal_type: "artisan_local_find",
+          review_language: "th",
+          local_evidence:
+            "ผู้รีวิวไทยพูดถึงงานคราฟต์ทำมือที่หาซื้อได้เฉพาะในตลาดท้องถิ่น",
+          travel_buyable: true
         },
         {
           brand: "Thai Silk",
           product: "Scarves",
           hashtag: "#thailandcraft",
           score: 84,
-          signal_type: "giftable_local_find"
+          signal_type: "giftable_local_find",
+          review_language: "th",
+          local_evidence:
+            "คอนเทนต์ไทยเน้นผ้าไหมเป็นของฝากที่มีเอกลักษณ์",
+          travel_buyable: true
         },
         {
           brand: "Benjarong",
           product: "Ceramic Tableware",
           hashtag: "#thaiceramics",
           score: 80,
-          signal_type: "rare_cultural_item"
+          signal_type: "rare_cultural_item",
+          review_language: "th",
+          local_evidence:
+            "รีวิวไทยเน้นความเป็นงานฝีมือและเอกลักษณ์วัฒนธรรม",
+          travel_buyable: true
         }
       ]
     },
@@ -253,21 +432,33 @@ function getCategoryMentions({ country, category, sources }) {
           product: "Canvas Tote Bag",
           hashtag: "#bangkokfashion",
           score: 90,
-          signal_type: "viral_accessory"
+          signal_type: "viral_accessory",
+          review_language: "th",
+          local_evidence:
+            "ครีเอเตอร์ไทยพูดถึงกระเป๋ายอดฮิตที่หาซื้อในไทย",
+          travel_buyable: true
         },
         {
           brand: "Naraya",
           product: "Mini Handbag",
           hashtag: "#thaifashionfinds",
           score: 84,
-          signal_type: "giftable_local_find"
+          signal_type: "giftable_local_find",
+          review_language: "th",
+          local_evidence:
+            "รีวิวไทยชี้ว่าเหมาะสำหรับซื้อฝากและพกกลับ",
+          travel_buyable: true
         },
         {
           brand: "Chatuchak Fashion",
           product: "Statement Earrings",
           hashtag: "#marketstyle",
           score: 80,
-          signal_type: "local_designer_trend"
+          signal_type: "local_designer_trend",
+          review_language: "th",
+          local_evidence:
+            "รีวิวไทยจากตลาดท้องถิ่นเกี่ยวกับดีไซน์เนอร์และงานแฮนด์เมด",
+          travel_buyable: true
         }
       ]
     }
@@ -281,7 +472,10 @@ function getCategoryMentions({ country, category, sources }) {
         product: "Featured Item",
         hashtag: "#localfinds",
         score: 70,
-        signal_type: "generic_local_signal"
+        signal_type: "generic_local_signal",
+        review_language: getCountryLanguageProfile(cc).primary_language,
+        local_evidence: "Local-language mention from local creators",
+        travel_buyable: true
       }
     ];
 
@@ -294,7 +488,10 @@ function getCategoryMentions({ country, category, sources }) {
     country: cc,
     category: cat,
     signal_type: item.signal_type || "brand_product",
-    discovered_from: sources[index % Math.max(1, sources.length)]?.source_id || null
+    discovered_from: sources[index % Math.max(1, sources.length)]?.source_id || null,
+    review_language: item.review_language || getCountryLanguageProfile(cc).primary_language,
+    local_evidence: item.local_evidence || "",
+    travel_buyable: item.travel_buyable !== false
   }));
 }
 
@@ -335,9 +532,61 @@ function buildDiscoveryGuidance({ country, category, mentions }) {
       derived_from_brand: m.brand,
       derived_from_product: m.product,
       relevance_score: m.score,
+      review_language: m.review_language || "",
+      travel_buyable: m.travel_buyable !== false,
       guidance_reason: `Strong local social signal around ${m.brand} / ${m.product}`
     }))
   };
+}
+
+function getDiscoverySeedSources({ country, category }) {
+  const cc = normalizeCountry(country);
+  const cat = normalizeCategory(category);
+
+  const seedMap = {
+    snacks_drinks: {
+      TH: [
+        { url: "https://www.foodpanda.co.th" },
+        { url: "https://www.makro.co.th" },
+        { url: "https://www.tops.co.th" },
+        { url: "https://www.bangkokfoodies.com" },
+        { url: "https://www.khaosod.co.th/lifestyle" },
+        { url: "https://www.foodie.co.th" }
+      ],
+      SG: [
+        { url: "https://www.redmart.com" },
+        { url: "https://www.foodpanda.sg" },
+        { url: "https://www.sgfoodonfoot.com" },
+        { url: "https://www.thehalalfoodblog.com" },
+        { url: "https://www.scoopsg.com" },
+        { url: "https://www.snackfirst.com.sg" }
+      ]
+    },
+
+    souvenirs_local_finds: {
+      TH: [
+        { url: "https://www.bangkok.com/shopping/souvenirs.htm" },
+        { url: "https://www.thaihandicrafts.org" },
+        { url: "https://www.thaicraft.com" },
+        { url: "https://www.thailandgift.com" },
+        { url: "https://www.thailandunique.com" },
+        { url: "https://www.bangkokshopping.com" }
+      ]
+    },
+
+    fashion_accessories: {
+      TH: [
+        { url: "https://www.zalora.co.th" },
+        { url: "https://www.uniqlo.com/th" },
+        { url: "https://www.mango.com/th" },
+        { url: "https://www.nike.com/th" },
+        { url: "https://www.thaihandmade.com" },
+        { url: "https://www.bangkokpost.com/life/fashion" }
+      ]
+    }
+  };
+
+  return (seedMap[cat] && seedMap[cat][cc]) || [];
 }
 
 async function persistSocialRun({
@@ -349,7 +598,8 @@ async function persistSocialRun({
   sources,
   mentions,
   signalScoreSummary,
-  discoveryGuidance
+  discoveryGuidance,
+  socialPromptGuidance
 }) {
   const runRef = db.collection(COLLECTIONS.SOCIAL_RUNS).doc(runId);
 
@@ -363,6 +613,7 @@ async function persistSocialRun({
     mentions_detected: mentions.length,
     signal_score_summary: signalScoreSummary,
     discovery_guidance: discoveryGuidance,
+    social_prompt_guidance: socialPromptGuidance,
     source_ids: sources.map((s) => s.source_id),
     created_at: FieldValue.serverTimestamp(),
     updated_at: FieldValue.serverTimestamp(),
@@ -429,6 +680,8 @@ async function runSocialScan({ country, category }) {
     category || env.ZAPTREND_DEFAULT_CATEGORY || DEFAULTS.CATEGORY
   );
 
+  const languageProfile = getCountryLanguageProfile(normalizedCountry);
+
   console.log("[SOCIAL SIGNAL ENGINE] runSocialScan:start", {
     runId,
     country: normalizedCountry,
@@ -469,6 +722,13 @@ async function runSocialScan({ country, category }) {
     mentions
   });
 
+  const socialPromptGuidance = buildLocalSocialPrompt({
+    country: normalizedCountry,
+    category: normalizedCategory,
+    sources,
+    languageProfile
+  });
+
   const finishedAt = isoNow();
 
   await persistSocialRun({
@@ -480,7 +740,8 @@ async function runSocialScan({ country, category }) {
     sources,
     mentions,
     signalScoreSummary,
-    discoveryGuidance
+    discoveryGuidance,
+    socialPromptGuidance
   });
 
   const result = {
@@ -495,7 +756,9 @@ async function runSocialScan({ country, category }) {
     mentions_detected: mentions.length,
     mentions,
     signal_score_summary: signalScoreSummary,
-    discovery_guidance: discoveryGuidance
+    discovery_guidance: discoveryGuidance,
+    language_profile: languageProfile,
+    social_prompt_guidance: socialPromptGuidance
   };
 
   console.log("[SOCIAL SIGNAL ENGINE] runSocialScan:done", {
@@ -531,28 +794,10 @@ async function runDiscoveryBoost({
     dryRun
   });
 
-  const seedSources = [
-    { url: "https://www.beauticool.com" },
-    { url: "https://www.karmarts.com" },
-    { url: "https://www.eveandboy.com" },
-    { url: "https://www.lazada.co.th" },
-    { url: "https://shopee.co.th" },
-    { url: "https://www.central.co.th" },
-    { url: "https://www.robinson.co.th" },
-    { url: "https://www.watsons.co.th" },
-    { url: "https://www.boots.co.th" },
-    { url: "https://www.konvy.com" },
-    { url: "https://www.looksi.com" },
-    { url: "https://www.siwilai.com" },
-    { url: "https://pantip.com" },
-    { url: "https://www.jeban.com" },
-    { url: "https://www.cosmenet.in.th" },
-    { url: "https://www.beautrium.com" },
-    { url: "https://www.konvy.com/blog" },
-    { url: "https://www.sudsapda.com" },
-    { url: "https://www.thairath.co.th/women" },
-    { url: "https://www.sanook.com/women" }
-  ];
+  const seedSources = getDiscoverySeedSources({
+    country: normalizedCountry,
+    category: normalizedCategory
+  });
 
   const discoveryResult = await createDiscoveryCandidates({
     country: normalizedCountry,
@@ -584,7 +829,8 @@ async function runDiscoveryBoost({
     candidates_created: discoveryResult.candidates_created || 0,
     skipped_count: discoveryResult.skipped_count || 0,
     skipped: discoveryResult.skipped || [],
-    candidates: discoveryResult.candidates || []
+    candidates: discoveryResult.candidates || [],
+    seed_sources_used: seedSources.map((x) => x.url)
   };
 }
 
