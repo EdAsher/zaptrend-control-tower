@@ -85,37 +85,37 @@ function getCountryLanguageConfig(country) {
       primary_language: "th",
       secondary_language: "en",
       language_instruction:
-        "Generate a mix of Thai-language and English-language sources. Prioritize Thai local websites, Thai beauty media, Thai ecommerce, Thai review/community websites, and Thailand-relevant publishers."
+        "Generate a mix of Thai-language and English-language sources. Prioritize Thailand-local websites, Thai media, Thai ecommerce, Thai communities, Thai beauty publishers, and Thailand-relevant editorial sources."
     },
     JP: {
       primary_language: "ja",
       secondary_language: "en",
       language_instruction:
-        "Generate a mix of Japanese-language and English-language sources. Prioritize Japan local websites and category-relevant local publishers."
+        "Generate a mix of Japanese-language and English-language sources. Prioritize Japan-local websites and category-relevant Japanese publishers."
     },
     KR: {
       primary_language: "ko",
       secondary_language: "en",
       language_instruction:
-        "Generate a mix of Korean-language and English-language sources. Prioritize Korea local websites and category-relevant local publishers."
+        "Generate a mix of Korean-language and English-language sources. Prioritize Korea-local websites and category-relevant Korean publishers."
     },
     TW: {
       primary_language: "zh-Hant",
       secondary_language: "en",
       language_instruction:
-        "Generate a mix of Traditional Chinese and English-language sources. Prioritize Taiwan local websites and category-relevant local publishers."
+        "Generate a mix of Traditional Chinese and English-language sources. Prioritize Taiwan-local websites and category-relevant publishers."
     },
     HK: {
       primary_language: "zh-Hant",
       secondary_language: "en",
       language_instruction:
-        "Generate a mix of Traditional Chinese and English-language sources. Prioritize Hong Kong local websites and category-relevant local publishers."
+        "Generate a mix of Traditional Chinese and English-language sources. Prioritize Hong Kong-local websites and category-relevant publishers."
     },
     VN: {
       primary_language: "vi",
       secondary_language: "en",
       language_instruction:
-        "Generate a mix of Vietnamese-language and English-language sources. Prioritize Vietnam local websites and category-relevant local publishers."
+        "Generate a mix of Vietnamese-language and English-language sources. Prioritize Vietnam-local websites and category-relevant publishers."
     }
   };
 
@@ -193,6 +193,84 @@ Avoid:
 - low-trust or off-category pages
 `
   );
+}
+
+function isSuspiciousDomain(domain = "") {
+  const d = normalizeDomain(domain);
+
+  const badKeywords = [
+    "marry",
+    "wedding",
+    "clinic",
+    "hospital",
+    "crypto",
+    "bet",
+    "casino",
+    "loan",
+    "finance",
+    "adult",
+    "24h",
+    "lover",
+    "wonderful",
+    "fashion-girl",
+    "beauty24h",
+    "topbeauty"
+  ];
+
+  return badKeywords.some((k) => d.includes(k));
+}
+
+function getTrustedDomainBoost(domain = "", country = "", category = "") {
+  const d = normalizeDomain(domain);
+  const cc = normalizeCountry(country);
+  const cat = normalizeCategory(category);
+
+  if (cc === "TH" && cat === "beauty_skincare") {
+    const trusted = [
+      "ellethailand.com",
+      "bangkokpost.com",
+      "kapook.com",
+      "thairath.co.th",
+      "sudsapda.com",
+      "gqthailand.com",
+      "beautybuffet.com",
+      "sephora.co.th",
+      "eveandboy.com",
+      "boots.co.th",
+      "watsons.co.th",
+      "shopee.co.th",
+      "lazada.co.th",
+      "konvy.com",
+      "looksi.com",
+      "beautrium.com",
+      "cosmenet.in.th",
+      "jeban.com",
+      "pantip.com"
+    ];
+
+    return trusted.includes(d) ? 10 : 0;
+  }
+
+  return 0;
+}
+
+function getCountryRelevanceScore(domain = "", country = "", language = "") {
+  const d = normalizeDomain(domain);
+  const cc = normalizeCountry(country);
+  const lang = normalizeLanguage(language);
+
+  let score = 50;
+
+  if (cc === "TH") {
+    if (d.endsWith(".co.th") || d.endsWith(".in.th") || d.includes("thai") || d.includes("bangkok")) {
+      score += 25;
+    }
+    if (lang === "th") {
+      score += 10;
+    }
+  }
+
+  return Math.max(0, Math.min(100, score));
 }
 
 async function loadExistingDomainState() {
@@ -345,7 +423,7 @@ Rules:
 - Avoid duplicates if possible
 - Avoid random unrelated corporate sites
 - Avoid obvious junk, parked, or dead sites
-- If the site is likely a broad site, return a category-relevant path when possible
+- If broad domain, return category-relevant path when possible
 
 Return JSON ONLY in this exact format:
 [
@@ -376,7 +454,7 @@ Allowed source_type values:
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      temperature: 0.6,
+      temperature: 0.4,
       messages: [{ role: "user", content: prompt }]
     });
 
@@ -391,6 +469,75 @@ Allowed source_type values:
     rawAiText,
     promptUsed: prompt
   };
+}
+
+async function verifyBorderlineCandidate({
+  country,
+  category,
+  domain,
+  url,
+  sourceType,
+  language,
+  reason
+}) {
+  if (!openai) {
+    return {
+      accept: true,
+      verifier_score: 50,
+      verifier_reason: "openai_unavailable"
+    };
+  }
+
+  try {
+    const prompt = `
+You are a strict source quality verifier.
+
+Evaluate whether this website is a GOOD candidate source for:
+Country: ${country}
+Category: ${category}
+
+Candidate:
+- Domain: ${domain}
+- URL: ${url}
+- Source Type: ${sourceType}
+- Language: ${language}
+- Claimed Reason: ${reason}
+
+Return JSON ONLY:
+{
+  "accept": true,
+  "verifier_score": 0,
+  "verifier_reason": "short reason"
+}
+
+Rules:
+- Reject generic, suspicious, irrelevant, low-trust, or weakly local domains
+- Prefer country-relevant and category-relevant websites
+- Be conservative
+`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [{ role: "user", content: prompt }]
+    });
+
+    const raw = response.choices?.[0]?.message?.content || "{}";
+    const cleaned = stripMarkdownCodeFence(raw);
+    const parsed = JSON.parse(cleaned);
+
+    return {
+      accept: Boolean(parsed.accept),
+      verifier_score: Number(parsed.verifier_score || 0),
+      verifier_reason: String(parsed.verifier_reason || "")
+    };
+  } catch (err) {
+    return {
+      accept: false,
+      verifier_score: 0,
+      verifier_reason: `verifier_failed:${err.message}`
+    };
+  }
 }
 
 async function createDiscoveryCandidates({
@@ -436,6 +583,14 @@ async function createDiscoveryCandidates({
   for (const seed of allSeeds) {
     const url = normalizeUrl(seed.url || "");
     const domain = normalizeDomain(seed.domain || extractDomain(url));
+    const sourceType = String(seed.source_type || "ai_generated").trim();
+    const language = normalizeLanguage(seed.language || "en");
+    const reason = String(seed.reason || "").trim();
+
+    let qualityScore = Number(seed.quality_score || 80);
+    let reputationScore = Number(seed.reputation_score || 10);
+    let localityScore = Number(seed.locality_score || 70);
+    let categoryFitScore = Number(seed.category_fit_score || 70);
 
     if (!url || !isValidHttpUrl(url)) {
       skipped.push({ url, domain, reason: "invalid_url" });
@@ -462,6 +617,48 @@ async function createDiscoveryCandidates({
       continue;
     }
 
+    if (isSuspiciousDomain(domain)) {
+      skipped.push({ url, domain, reason: "suspicious_domain_pattern" });
+      continue;
+    }
+
+    localityScore = Math.max(
+      localityScore,
+      getCountryRelevanceScore(domain, normalizedCountry, language)
+    );
+
+    qualityScore += getTrustedDomainBoost(domain, normalizedCountry, normalizedCategory);
+    qualityScore = Math.min(100, qualityScore);
+
+    const borderline =
+      qualityScore < 78 ||
+      categoryFitScore < 78 ||
+      localityScore < 75;
+
+    if (borderline) {
+      const verify = await verifyBorderlineCandidate({
+        country: normalizedCountry,
+        category: normalizedCategory,
+        domain,
+        url,
+        sourceType,
+        language,
+        reason
+      });
+
+      if (!verify.accept) {
+        skipped.push({
+          url,
+          domain,
+          reason: "rejected_by_verifier",
+          verifier_reason: verify.verifier_reason
+        });
+        continue;
+      }
+
+      qualityScore = Math.max(qualityScore, verify.verifier_score || qualityScore);
+    }
+
     accepted.push(
       buildCandidateDoc({
         country: normalizedCountry,
@@ -469,13 +666,13 @@ async function createDiscoveryCandidates({
         theme: normalizedTheme,
         url,
         domain,
-        sourceType: seed.source_type || "ai_generated",
-        qualityScore: Number(seed.quality_score || 80),
-        reputationScore: Number(seed.reputation_score || 10),
-        localityScore: Number(seed.locality_score || 70),
-        categoryFitScore: Number(seed.category_fit_score || 70),
-        language: normalizeLanguage(seed.language || "en"),
-        reason: String(seed.reason || "").trim()
+        sourceType,
+        qualityScore,
+        reputationScore,
+        localityScore,
+        categoryFitScore,
+        language,
+        reason
       })
     );
 
@@ -502,7 +699,7 @@ async function createDiscoveryCandidates({
     category: normalizedCategory,
     theme: normalizedTheme,
     requested_limit: normalizedLimit,
-    source: "AI_DISCOVERY_ENGINE_BILINGUAL",
+    source: "AI_DISCOVERY_ENGINE_QC",
 
     ai_candidates_received: aiCandidates.length,
     seed_candidates_received: candidateSeeds.length,
