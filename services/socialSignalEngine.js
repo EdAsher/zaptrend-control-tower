@@ -22,74 +22,280 @@ function buildRunId(prefix = "socialrun") {
   return `${prefix}_${stamp}_${rand}`;
 }
 
-function getMockSocialSources({ country, category }) {
+function getCategorySocialSources({ country, category }) {
   const cc = normalizeCountry(country);
   const cat = normalizeCategory(category);
 
+  const sourceMap = {
+    snacks_drinks: {
+      TH: [
+        {
+          source_id: `${cc}_${cat}_tiktok_snacks_th_1`,
+          platform: "tiktok",
+          handle: "@bangkoksnackhunt",
+          url: "https://www.tiktok.com/",
+          source_weight: 0.95,
+          creator_type: "food_reviewer"
+        },
+        {
+          source_id: `${cc}_${cat}_instagram_snacks_th_2`,
+          platform: "instagram",
+          handle: "@thaifoodfinds",
+          url: "https://www.instagram.com/",
+          source_weight: 0.9,
+          creator_type: "local_reviewer"
+        },
+        {
+          source_id: `${cc}_${cat}_youtube_snacks_th_3`,
+          platform: "youtube",
+          handle: "@ThaiSnackRadar",
+          url: "https://www.youtube.com/",
+          source_weight: 0.85,
+          creator_type: "trend_reviewer"
+        }
+      ],
+      SG: [
+        {
+          source_id: `${cc}_${cat}_tiktok_snacks_sg_1`,
+          platform: "tiktok",
+          handle: "@sgsnackfinds",
+          url: "https://www.tiktok.com/",
+          source_weight: 0.95,
+          creator_type: "food_reviewer"
+        },
+        {
+          source_id: `${cc}_${cat}_instagram_snacks_sg_2`,
+          platform: "instagram",
+          handle: "@sgmunchradar",
+          url: "https://www.instagram.com/",
+          source_weight: 0.9,
+          creator_type: "local_reviewer"
+        },
+        {
+          source_id: `${cc}_${cat}_youtube_snacks_sg_3`,
+          platform: "youtube",
+          handle: "@SingaporeSnackWatch",
+          url: "https://www.youtube.com/",
+          source_weight: 0.85,
+          creator_type: "trend_reviewer"
+        }
+      ]
+    },
+
+    souvenirs_local_finds: {
+      TH: [
+        {
+          source_id: `${cc}_${cat}_tiktok_souvenir_th_1`,
+          platform: "tiktok",
+          handle: "@bangkokgiftfinds",
+          url: "https://www.tiktok.com/",
+          source_weight: 0.95,
+          creator_type: "market_reviewer"
+        },
+        {
+          source_id: `${cc}_${cat}_instagram_souvenir_th_2`,
+          platform: "instagram",
+          handle: "@chatuchakfinds",
+          url: "https://www.instagram.com/",
+          source_weight: 0.9,
+          creator_type: "local_creator"
+        },
+        {
+          source_id: `${cc}_${cat}_youtube_souvenir_th_3`,
+          platform: "youtube",
+          handle: "@ThaiSouvenirRadar",
+          url: "https://www.youtube.com/",
+          source_weight: 0.85,
+          creator_type: "shopping_reviewer"
+        }
+      ]
+    },
+
+    fashion_accessories: {
+      TH: [
+        {
+          source_id: `${cc}_${cat}_tiktok_fashion_th_1`,
+          platform: "tiktok",
+          handle: "@bangkokstylefinds",
+          url: "https://www.tiktok.com/",
+          source_weight: 0.95,
+          creator_type: "fashion_creator"
+        },
+        {
+          source_id: `${cc}_${cat}_instagram_fashion_th_2`,
+          platform: "instagram",
+          handle: "@thaifashionedit",
+          url: "https://www.instagram.com/",
+          source_weight: 0.9,
+          creator_type: "style_reviewer"
+        },
+        {
+          source_id: `${cc}_${cat}_youtube_fashion_th_3`,
+          platform: "youtube",
+          handle: "@ThaiAccessoryRadar",
+          url: "https://www.youtube.com/",
+          source_weight: 0.85,
+          creator_type: "trend_reviewer"
+        }
+      ]
+    }
+  };
+
+  const byCategory = sourceMap[cat] || {};
+  const byCountry = byCategory[cc] || [];
+
+  if (byCountry.length > 0) return byCountry;
+
   return [
     {
-      source_id: `${cc}_${cat}_tiktok_creator_alpha`,
-      platform: "tiktok",
-      handle: "@thai_beauty_finds",
-      url: "https://www.tiktok.com/",
-      source_weight: 0.95
-    },
-    {
-      source_id: `${cc}_${cat}_instagram_creator_beta`,
+      source_id: `${cc}_${cat}_social_generic_1`,
       platform: "instagram",
-      handle: "@bangkok_skincare_daily",
+      handle: "@localtrendwatch",
       url: "https://www.instagram.com/",
-      source_weight: 0.9
+      source_weight: 0.8,
+      creator_type: "generic_local_reviewer"
     },
     {
-      source_id: `${cc}_${cat}_youtube_creator_gamma`,
-      platform: "youtube",
-      handle: "@ThaiBeautyRadar",
-      url: "https://www.youtube.com/",
-      source_weight: 0.85
+      source_id: `${cc}_${cat}_social_generic_2`,
+      platform: "tiktok",
+      handle: "@localfindsradar",
+      url: "https://www.tiktok.com/",
+      source_weight: 0.8,
+      creator_type: "generic_local_creator"
     }
   ];
 }
 
-function extractMentionsFromSources({ country, category, sources }) {
+function getCategoryMentions({ country, category, sources }) {
   const cc = normalizeCountry(country);
   const cat = normalizeCategory(category);
 
-  return [
-    {
-      mention_id: buildRunId("mention"),
-      brand: "Srichand",
-      product: "Translucent Powder",
-      hashtag: "#thaibeauty",
-      score: 88,
-      country: cc,
-      category: cat,
-      signal_type: "brand_product",
-      discovered_from: sources[0]?.source_id || null
+  const mentionMap = {
+    snacks_drinks: {
+      TH: [
+        {
+          brand: "Pocky Thailand",
+          product: "Thai Milk Tea Flavor",
+          hashtag: "#thaiflavors",
+          score: 88,
+          signal_type: "limited_flavor"
+        },
+        {
+          brand: "Tao Kae Noi",
+          product: "Seaweed Snacks",
+          hashtag: "#thaistreetsnack",
+          score: 84,
+          signal_type: "viral_snack"
+        },
+        {
+          brand: "Ichitan",
+          product: "Green Tea Drink",
+          hashtag: "#thaidrinks",
+          score: 80,
+          signal_type: "drink_trend"
+        }
+      ],
+      SG: [
+        {
+          brand: "Irvins",
+          product: "Salted Egg Snacks",
+          hashtag: "#sgsnackfinds",
+          score: 90,
+          signal_type: "iconic_local_snack"
+        },
+        {
+          brand: "TWG",
+          product: "Tea Gift Sets",
+          hashtag: "#sggiftablefood",
+          score: 82,
+          signal_type: "giftable_local_find"
+        },
+        {
+          brand: "Old Chang Kee",
+          product: "Snack Packs",
+          hashtag: "#sgbites",
+          score: 78,
+          signal_type: "local_favorite"
+        }
+      ]
     },
-    {
-      mention_id: buildRunId("mention"),
-      brand: "Mistine",
-      product: "Eyeliner",
-      hashtag: "#bangkokfinds",
-      score: 80,
-      country: cc,
-      category: cat,
-      signal_type: "product_trend",
-      discovered_from: sources[1]?.source_id || null
+
+    souvenirs_local_finds: {
+      TH: [
+        {
+          brand: "Chatuchak Market",
+          product: "Handmade Crafts",
+          hashtag: "#bangkoksouvenir",
+          score: 90,
+          signal_type: "artisan_local_find"
+        },
+        {
+          brand: "Thai Silk",
+          product: "Scarves",
+          hashtag: "#thailandcraft",
+          score: 84,
+          signal_type: "giftable_local_find"
+        },
+        {
+          brand: "Benjarong",
+          product: "Ceramic Tableware",
+          hashtag: "#thaiceramics",
+          score: 80,
+          signal_type: "rare_cultural_item"
+        }
+      ]
     },
-    {
-      mention_id: buildRunId("mention"),
-      brand: "Yanhee",
-      product: "Acne Gel",
-      hashtag: "#thai skincare",
-      score: 76,
-      country: cc,
-      category: cat,
-      signal_type: "problem_solution",
-      discovered_from: sources[2]?.source_id || null
+
+    fashion_accessories: {
+      TH: [
+        {
+          brand: "Gentlewoman",
+          product: "Canvas Tote Bag",
+          hashtag: "#bangkokfashion",
+          score: 90,
+          signal_type: "viral_accessory"
+        },
+        {
+          brand: "Naraya",
+          product: "Mini Handbag",
+          hashtag: "#thaifashionfinds",
+          score: 84,
+          signal_type: "giftable_local_find"
+        },
+        {
+          brand: "Chatuchak Fashion",
+          product: "Statement Earrings",
+          hashtag: "#marketstyle",
+          score: 80,
+          signal_type: "local_designer_trend"
+        }
+      ]
     }
-  ];
+  };
+
+  const rawMentions =
+    (mentionMap[cat] && mentionMap[cat][cc]) ||
+    [
+      {
+        brand: "Local Trend",
+        product: "Featured Item",
+        hashtag: "#localfinds",
+        score: 70,
+        signal_type: "generic_local_signal"
+      }
+    ];
+
+  return rawMentions.map((item, index) => ({
+    mention_id: buildRunId("mention"),
+    brand: item.brand,
+    product: item.product,
+    hashtag: item.hashtag,
+    score: Number(item.score || 0),
+    country: cc,
+    category: cat,
+    signal_type: item.signal_type || "brand_product",
+    discovered_from: sources[index % Math.max(1, sources.length)]?.source_id || null
+  }));
 }
 
 function buildSignalScoreSummary(mentions = []) {
@@ -119,7 +325,7 @@ function buildSignalScoreSummary(mentions = []) {
 }
 
 function buildDiscoveryGuidance({ country, category, mentions }) {
-  const top = [...mentions].sort((a, b) => b.score - a.score).slice(0, 3);
+  const top = [...mentions].sort((a, b) => b.score - a.score).slice(0, 5);
 
   return {
     country: normalizeCountry(country),
@@ -129,7 +335,7 @@ function buildDiscoveryGuidance({ country, category, mentions }) {
       derived_from_brand: m.brand,
       derived_from_product: m.product,
       relevance_score: m.score,
-      guidance_reason: `Strong repeated social signal from ${m.brand} / ${m.product}`
+      guidance_reason: `Strong local social signal around ${m.brand} / ${m.product}`
     }))
   };
 }
@@ -229,12 +435,12 @@ async function runSocialScan({ country, category }) {
     category: normalizedCategory
   });
 
-  const sources = getMockSocialSources({
+  const sources = getCategorySocialSources({
     country: normalizedCountry,
     category: normalizedCategory
   });
 
-  const mentions = extractMentionsFromSources({
+  const mentions = getCategoryMentions({
     country: normalizedCountry,
     category: normalizedCategory,
     sources
@@ -325,29 +531,28 @@ async function runDiscoveryBoost({
     dryRun
   });
 
-  // Curated seeds for now; later this can be replaced by real AI-generated discovery inputs.
-const seedSources = [
-  { url: "https://www.beauticool.com" },
-  { url: "https://www.karmarts.com" },
-  { url: "https://www.eveandboy.com" },
-  { url: "https://www.lazada.co.th" },
-  { url: "https://shopee.co.th" },
-  { url: "https://www.central.co.th" },
-  { url: "https://www.robinson.co.th" },
-  { url: "https://www.watsons.co.th" },
-  { url: "https://www.boots.co.th" },
-  { url: "https://www.konvy.com" },
-  { url: "https://www.looksi.com" },
-  { url: "https://www.siwilai.com" },
-  { url: "https://pantip.com" },
-  { url: "https://www.jeban.com" },
-  { url: "https://www.cosmenet.in.th" },
-  { url: "https://www.beautrium.com" },
-  { url: "https://www.konvy.com/blog" },
-  { url: "https://www.sudsapda.com" },
-  { url: "https://www.thairath.co.th/women" },
-  { url: "https://www.sanook.com/women" }
-];
+  const seedSources = [
+    { url: "https://www.beauticool.com" },
+    { url: "https://www.karmarts.com" },
+    { url: "https://www.eveandboy.com" },
+    { url: "https://www.lazada.co.th" },
+    { url: "https://shopee.co.th" },
+    { url: "https://www.central.co.th" },
+    { url: "https://www.robinson.co.th" },
+    { url: "https://www.watsons.co.th" },
+    { url: "https://www.boots.co.th" },
+    { url: "https://www.konvy.com" },
+    { url: "https://www.looksi.com" },
+    { url: "https://www.siwilai.com" },
+    { url: "https://pantip.com" },
+    { url: "https://www.jeban.com" },
+    { url: "https://www.cosmenet.in.th" },
+    { url: "https://www.beautrium.com" },
+    { url: "https://www.konvy.com/blog" },
+    { url: "https://www.sudsapda.com" },
+    { url: "https://www.thairath.co.th/women" },
+    { url: "https://www.sanook.com/women" }
+  ];
 
   const discoveryResult = await createDiscoveryCandidates({
     country: normalizedCountry,
