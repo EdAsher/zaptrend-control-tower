@@ -69,7 +69,8 @@ function isCategoryValidSignal({ brand, product, hashtag }, category) {
       text.includes("bag") ||
       text.includes("local") ||
       text.includes("market") ||
-      text.includes("handmade")
+      text.includes("handmade") ||
+      text.includes("scarf")
     );
   }
 
@@ -115,7 +116,6 @@ async function ingestSignals({
     const product = normalizeText(raw.product);
     const hashtag = normalizeText(raw.hashtag);
 
-    // 🚨 CATEGORY GUARDRAIL
     if (!isCategoryValidSignal({ brand, product, hashtag }, normalizedCategory)) {
       skipped_count++;
       skipped.push({
@@ -130,6 +130,12 @@ async function ingestSignals({
     const sourceWeight = Number(raw.source_weight || 1);
     const engagement = Number(raw.engagement || 1);
     const freshnessBoost = Number(raw.freshness_boost || 1);
+    const reviewLanguage = normalizeText(raw.review_language || "");
+    const localEvidence = normalizeText(raw.local_evidence || "");
+    const travelBuyable = raw.travel_buyable !== false;
+    const localConfidence = Number(raw.local_confidence || 0);
+    const audienceLocale = normalizeText(raw.audience_locale || "");
+    const creatorType = normalizeText(raw.creator_type || "");
 
     const signalScore = scoreSignal({
       sourceWeight,
@@ -161,6 +167,12 @@ async function ingestSignals({
       source_weight: sourceWeight,
       freshness_boost: freshnessBoost,
       signal_score: signalScore,
+      review_language: reviewLanguage || null,
+      local_evidence: localEvidence || null,
+      travel_buyable: travelBuyable,
+      local_confidence: localConfidence || 0,
+      audience_locale: audienceLocale || null,
+      creator_type: creatorType || null,
       created_at: FieldValue.serverTimestamp()
     });
 
@@ -179,7 +191,21 @@ async function ingestSignals({
         last_signal_score: signalScore,
         source_types: FieldValue.arrayUnion(sourceType),
         last_seen_at: FieldValue.serverTimestamp(),
-        updated_at: FieldValue.serverTimestamp()
+        updated_at: FieldValue.serverTimestamp(),
+
+        review_languages: reviewLanguage
+          ? FieldValue.arrayUnion(reviewLanguage)
+          : FieldValue.arrayUnion(),
+        latest_review_language: reviewLanguage || null,
+        local_evidence_samples: localEvidence
+          ? FieldValue.arrayUnion(localEvidence)
+          : FieldValue.arrayUnion(),
+        travel_buyable: travelBuyable,
+        max_local_confidence: Math.max(0, Math.min(1, localConfidence || 0)),
+        latest_audience_locale: audienceLocale || null,
+        creator_types: creatorType
+          ? FieldValue.arrayUnion(creatorType)
+          : FieldValue.arrayUnion()
       },
       { merge: true }
     );
@@ -190,7 +216,10 @@ async function ingestSignals({
       brand,
       product,
       hashtag,
-      signal_score: signalScore
+      signal_score: signalScore,
+      review_language: reviewLanguage || null,
+      travel_buyable: travelBuyable,
+      local_confidence: localConfidence || 0
     });
   }
 

@@ -92,7 +92,7 @@ function buildLocalSocialPrompt({ country, category, sources, languageProfile })
   const sourceLines = sources
     .map(
       (s, i) =>
-        `${i + 1}. ${s.platform} ${s.handle} | language=${s.source_language} | audience=${s.audience_locale} | creator_type=${s.creator_type}`
+        `${i + 1}. ${s.platform} ${s.handle} | language=${s.source_language} | audience=${s.audience_locale} | creator_type=${s.creator_type} | local_confidence=${s.local_confidence}`
     )
     .join("\n");
 
@@ -325,7 +325,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "รีวิวโดยคนไทยพูดถึงรสชาติไทยนมชาและความน่าซื้อกลับ",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.96
         },
         {
           brand: "Tao Kae Noi",
@@ -336,7 +337,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "คอนเทนต์ไทยรีวิวขนมพกง่าย ซื้อฝากได้",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.94
         },
         {
           brand: "Ichitan",
@@ -347,7 +349,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "รีวิวภาษาไทยจากผู้บริโภคไทยในตลาดท้องถิ่น",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.92
         }
       ],
       SG: [
@@ -360,7 +363,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "en",
           local_evidence:
             "Singapore-local reviewers discussing giftable salted egg snacks",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.96
         },
         {
           brand: "TWG",
@@ -371,7 +375,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "en",
           local_evidence:
             "Singapore reviewers highlighting premium tea sets as bring-back gifts",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.93
         },
         {
           brand: "Old Chang Kee",
@@ -382,7 +387,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "en",
           local_evidence:
             "Singapore local snack reviewers mentioning easy-to-share snack packs",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.9
         }
       ]
     },
@@ -398,7 +404,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "ผู้รีวิวไทยพูดถึงงานคราฟต์ทำมือที่หาซื้อได้เฉพาะในตลาดท้องถิ่น",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.97
         },
         {
           brand: "Thai Silk",
@@ -409,7 +416,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "คอนเทนต์ไทยเน้นผ้าไหมเป็นของฝากที่มีเอกลักษณ์",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.94
         },
         {
           brand: "Benjarong",
@@ -420,7 +428,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "รีวิวไทยเน้นความเป็นงานฝีมือและเอกลักษณ์วัฒนธรรม",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.92
         }
       ]
     },
@@ -436,7 +445,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "ครีเอเตอร์ไทยพูดถึงกระเป๋ายอดฮิตที่หาซื้อในไทย",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.97
         },
         {
           brand: "Naraya",
@@ -447,7 +457,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "รีวิวไทยชี้ว่าเหมาะสำหรับซื้อฝากและพกกลับ",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.94
         },
         {
           brand: "Chatuchak Fashion",
@@ -458,7 +469,8 @@ function getCategoryMentions({ country, category, sources }) {
           review_language: "th",
           local_evidence:
             "รีวิวไทยจากตลาดท้องถิ่นเกี่ยวกับดีไซน์เนอร์และงานแฮนด์เมด",
-          travel_buyable: true
+          travel_buyable: true,
+          local_confidence: 0.92
         }
       ]
     }
@@ -475,24 +487,31 @@ function getCategoryMentions({ country, category, sources }) {
         signal_type: "generic_local_signal",
         review_language: getCountryLanguageProfile(cc).primary_language,
         local_evidence: "Local-language mention from local creators",
-        travel_buyable: true
+        travel_buyable: true,
+        local_confidence: 0.8
       }
     ];
 
-  return rawMentions.map((item, index) => ({
-    mention_id: buildRunId("mention"),
-    brand: item.brand,
-    product: item.product,
-    hashtag: item.hashtag,
-    score: Number(item.score || 0),
-    country: cc,
-    category: cat,
-    signal_type: item.signal_type || "brand_product",
-    discovered_from: sources[index % Math.max(1, sources.length)]?.source_id || null,
-    review_language: item.review_language || getCountryLanguageProfile(cc).primary_language,
-    local_evidence: item.local_evidence || "",
-    travel_buyable: item.travel_buyable !== false
-  }));
+  return rawMentions.map((item, index) => {
+    const source = sources[index % Math.max(1, sources.length)] || {};
+    return {
+      mention_id: buildRunId("mention"),
+      brand: item.brand,
+      product: item.product,
+      hashtag: item.hashtag,
+      score: Number(item.score || 0),
+      country: cc,
+      category: cat,
+      signal_type: item.signal_type || "brand_product",
+      discovered_from: source.source_id || null,
+      review_language: item.review_language || getCountryLanguageProfile(cc).primary_language,
+      local_evidence: item.local_evidence || "",
+      travel_buyable: item.travel_buyable !== false,
+      local_confidence: Number(item.local_confidence || source.local_confidence || 0.8),
+      audience_locale: source.audience_locale || cc,
+      creator_type: source.creator_type || "local_reviewer"
+    };
+  });
 }
 
 function buildSignalScoreSummary(mentions = []) {
@@ -534,6 +553,7 @@ function buildDiscoveryGuidance({ country, category, mentions }) {
       relevance_score: m.score,
       review_language: m.review_language || "",
       travel_buyable: m.travel_buyable !== false,
+      local_confidence: Number(m.local_confidence || 0),
       guidance_reason: `Strong local social signal around ${m.brand} / ${m.product}`
     }))
   };
@@ -710,7 +730,13 @@ async function runSocialScan({ country, category }) {
       source_weight: 1.2,
       engagement: 2,
       freshness_boost: 1.5,
-      source_ref: m.discovered_from || "social"
+      source_ref: m.discovered_from || "social",
+      review_language: m.review_language || "",
+      local_evidence: m.local_evidence || "",
+      travel_buyable: m.travel_buyable !== false,
+      local_confidence: Number(m.local_confidence || 0),
+      audience_locale: m.audience_locale || normalizedCountry,
+      creator_type: m.creator_type || "local_reviewer"
     }))
   });
 

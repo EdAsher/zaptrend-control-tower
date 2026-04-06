@@ -64,27 +64,91 @@ function computeSourceTypeScore(sourceTypes = []) {
   return score;
 }
 
+function getPrimaryLanguageByCountry(country) {
+  const cc = normalizeCountry(country);
+  const map = {
+    TH: "th",
+    SG: "en",
+    MY: "ms",
+    JP: "ja",
+    KR: "ko",
+    VN: "vi"
+  };
+  return map[cc] || "en";
+}
+
+function computeLanguageAlignmentScore(memoryDoc, country) {
+  const primary = getPrimaryLanguageByCountry(country);
+  const latest = String(memoryDoc.latest_review_language || "").trim().toLowerCase();
+  const langs = Array.isArray(memoryDoc.review_languages)
+    ? memoryDoc.review_languages.map((x) => String(x || "").trim().toLowerCase())
+    : [];
+
+  if (latest && latest === primary) return 18;
+  if (langs.includes(primary)) return 12;
+  if (langs.length > 0) return 4;
+  return 0;
+}
+
+function computeTravelBuyableScore(memoryDoc) {
+  return memoryDoc.travel_buyable === true ? 18 : 0;
+}
+
+function computeLocalConfidenceScore(memoryDoc) {
+  const value = Number(memoryDoc.max_local_confidence || 0);
+  if (value >= 0.95) return 20;
+  if (value >= 0.9) return 16;
+  if (value >= 0.8) return 10;
+  if (value >= 0.6) return 5;
+  return 0;
+}
+
+function computeCreatorTypeScore(memoryDoc) {
+  const types = Array.isArray(memoryDoc.creator_types)
+    ? memoryDoc.creator_types.map((x) => String(x || "").trim().toLowerCase())
+    : [];
+
+  let score = 0;
+  if (types.includes("food_reviewer")) score += 6;
+  if (types.includes("local_reviewer")) score += 6;
+  if (types.includes("market_reviewer")) score += 6;
+  if (types.includes("shopping_reviewer")) score += 6;
+  if (types.includes("style_reviewer")) score += 6;
+  if (types.includes("fashion_creator")) score += 5;
+  if (types.includes("trend_reviewer")) score += 4;
+
+  return Math.min(score, 12);
+}
+
 function computeTrendScore(memoryDoc) {
   const totalMentions = Number(memoryDoc.total_mentions || 0);
   const cumulativeScore = Number(memoryDoc.cumulative_score || 0);
   const lastSignalScore = Number(memoryDoc.last_signal_score || 0);
   const freshnessScore = computeFreshnessScore(memoryDoc.last_seen_at);
   const sourceTypeScore = computeSourceTypeScore(memoryDoc.source_types || []);
+  const languageAlignmentScore = computeLanguageAlignmentScore(memoryDoc, memoryDoc.country);
+  const travelBuyableScore = computeTravelBuyableScore(memoryDoc);
+  const localConfidenceScore = computeLocalConfidenceScore(memoryDoc);
+  const creatorTypeScore = computeCreatorTypeScore(memoryDoc);
 
   const score =
     totalMentions * 8 +
     cumulativeScore * 0.5 +
     lastSignalScore * 0.8 +
     freshnessScore +
-    sourceTypeScore;
+    sourceTypeScore +
+    languageAlignmentScore +
+    travelBuyableScore +
+    localConfidenceScore +
+    creatorTypeScore;
 
   return Math.round(score);
 }
 
 function computeTrendStatus(score) {
-  if (score >= 120) return "HOT";
-  if (score >= 80) return "TRENDING";
-  if (score >= 40) return "WATCHLIST";
+  if (score >= 140) return "HOT";
+  if (score >= 90) return "TRENDING";
+  if (score >= 45) return "WATCHLIST";
   return "LOW_SIGNAL";
 }
 
@@ -124,7 +188,8 @@ function isCategoryValidMemory(row, category) {
       text.includes("bag") ||
       text.includes("local") ||
       text.includes("market") ||
-      text.includes("handmade")
+      text.includes("handmade") ||
+      text.includes("scarf")
     );
   }
 
@@ -193,7 +258,12 @@ async function runTrendScoring({
         source_types: row.source_types || [],
         last_seen_at: row.last_seen_at || null,
         trend_score: trendScore,
-        trend_status: trendStatus
+        trend_status: trendStatus,
+        latest_review_language: row.latest_review_language || null,
+        travel_buyable: row.travel_buyable === true,
+        max_local_confidence: Number(row.max_local_confidence || 0),
+        creator_types: row.creator_types || [],
+        latest_audience_locale: row.latest_audience_locale || null
       };
     })
     .sort((a, b) => b.trend_score - a.trend_score)
@@ -236,6 +306,11 @@ async function runTrendScoring({
       last_seen_at: item.last_seen_at || null,
       trend_score: item.trend_score,
       trend_status: item.trend_status,
+      latest_review_language: item.latest_review_language,
+      travel_buyable: item.travel_buyable,
+      max_local_confidence: item.max_local_confidence,
+      creator_types: item.creator_types,
+      latest_audience_locale: item.latest_audience_locale,
       created_at: FieldValue.serverTimestamp(),
       updated_at: FieldValue.serverTimestamp()
     });
