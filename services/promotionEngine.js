@@ -58,8 +58,15 @@ function isEligibleForPromotion(candidate, existingSourcesMap) {
   if (qualityScore < 70) return false;
   if (reputationScore < 0) return false;
 
-  // Health gate
-  if (healthStatus !== "healthy") return false;
+// Health gate (Phase 19 relaxed logic)
+if (healthStatus === "dead" || healthStatus === "disabled") {
+  return false;
+}
+
+// Optional safety for weak unknowns
+if (healthStatus === "unknown" && qualityScore < 75) {
+  return false;
+}
 
   // Active gate
   if (!isActive || autoDisabled) return false;
