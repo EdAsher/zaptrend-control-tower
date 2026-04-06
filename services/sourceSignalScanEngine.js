@@ -1,6 +1,14 @@
 const { db } = require("../config/firestore");
 const { ingestSignals } = require("./signalMemoryEngine");
 
+const MAX_SOURCES_PER_SCAN = 4;
+const MAX_SIGNALS_PER_SOURCE = 3;
+const MAX_TOTAL_SIGNALS = 12;
+const FETCH_TIMEOUT_MS = 2500;
+const CONCURRENCY = 2;
+const MAX_HTML_CHARS = 120000;
+const MAX_BODY_TEXT_CHARS = 2500;
+
 function normalizeCountry(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -105,7 +113,7 @@ function inferLanguageFromHtml(html = "", fallback = "en") {
   const langAttr = extractTagContent(html, /<html[^>]+lang=["']([^"']+)["']/i);
   if (langAttr) return langAttr.toLowerCase().slice(0, 2);
 
-  const text = stripHtml(html).slice(0, 3000);
+  const text = stripHtml(html).slice(0, 2000);
 
   if (/[ก-๙]/.test(text)) return "th";
   if (/[ぁ-んァ-ン一-龯]/.test(text)) return "ja";
@@ -132,7 +140,6 @@ function cleanPhrase(value = "") {
 
 function scorePhrase(phrase = "", category = "") {
   const text = phrase.toLowerCase();
-
   let score = 0;
 
   if (category === "snacks_drinks") {
@@ -202,10 +209,7 @@ function isCategoryValid(signal, category) {
       text.includes("accessories") ||
       text.includes("tote") ||
       text.includes("handbag") ||
-      text.includes("style") ||
-      text.includes("jewelry") ||
-      text.includes("bracelet") ||
-      text.includes("necklace")
+      text.includes("style")
     );
   }
 
@@ -213,17 +217,27 @@ function isCategoryValid(signal, category) {
 }
 
 async function fetchHtml(url) {
+  let controller;
+  let timeout;
+
   try {
+    controller = new AbortController();
+    timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     const res = await fetch(url, {
       method: "GET",
       redirect: "follow",
+      signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0A",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0A-hotfix",
         accept: "text/html,application/xhtml+xml"
       }
     });
 
-    const html = await res.text();
+    let html = await res.text();
+    if (html.length > MAX_HTML_CHARS) {
+      html = html.slice(0, MAX_HTML_CHARS);
+    }
 
     return {
       ok: res.ok,
@@ -237,6 +251,8 @@ async function fetchHtml(url) {
       html: "",
       error: String(error?.message || "fetch_failed")
     };
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -246,7 +262,7 @@ function extractJsonLdBlocks(html = "") {
 
   for (const match of matches) {
     const raw = (match[1] || "").trim();
-    if (!raw) continue;
+    if (!raw || raw.length > 30000) continue;
 
     try {
       const parsed = JSON.parse(raw);
@@ -276,38 +292,6 @@ function flattenJsonLd(items) {
 
   walk(items);
   return out;
-}
-
-function candidateFromJsonLdObject(obj, source, category, context) {
-  const type = String(obj["@type"] || "").toLowerCase();
-  if (!type.includes("product")) return null;
-
-  const name = cleanPhrase(obj.name || "");
-  const brand =
-    cleanPhrase(
-      typeof obj.brand === "object" ? obj.brand?.name || "" : obj.brand || ""
-    ) || cleanPhrase(source.domain || source.source_id || "");
-
-  if (!name) return null;
-
-  const signal = {
-    brand: brand || safeDomainLabel(source.domain),
-    product: name,
-    hashtag: inferHashtag(name, category, context.country),
-    source_ref: source.domain || source.source_id || source.id || "",
-    source_weight: 1.1,
-    engagement: 3,
-    freshness_boost: 1.2,
-    review_language: context.primary_language,
-    local_evidence: `Real page extraction via JSON-LD from ${source.domain || source.url}`,
-    travel_buyable: true,
-    local_confidence: Math.max(context.local_confidence, 0.82),
-    audience_locale: context.audience_locale,
-    creator_type: inferCreatorType(source),
-    extraction_method: "jsonld_product"
-  };
-
-  return isCategoryValid(signal, category) ? signal : null;
 }
 
 function inferCreatorType(source) {
@@ -346,13 +330,45 @@ function inferHashtag(product = "", category = "", country = "") {
   return "#localfinds";
 }
 
+function candidateFromJsonLdObject(obj, source, category, context) {
+  const type = String(obj["@type"] || "").toLowerCase();
+  if (!type.includes("product")) return null;
+
+  const name = cleanPhrase(obj.name || "");
+  const brand =
+    cleanPhrase(
+      typeof obj.brand === "object" ? obj.brand?.name || "" : obj.brand || ""
+    ) || cleanPhrase(source.domain || source.source_id || "");
+
+  if (!name) return null;
+
+  const signal = {
+    brand: brand || safeDomainLabel(source.domain),
+    product: name,
+    hashtag: inferHashtag(name, category, context.country),
+    source_ref: source.domain || source.source_id || source.id || "",
+    source_weight: 1.1,
+    engagement: 3,
+    freshness_boost: 1.2,
+    review_language: context.primary_language,
+    local_evidence: `Real page extraction via JSON-LD from ${source.domain || source.url}`,
+    travel_buyable: true,
+    local_confidence: Math.max(context.local_confidence, 0.82),
+    audience_locale: context.audience_locale,
+    creator_type: inferCreatorType(source),
+    extraction_method: "jsonld_product"
+  };
+
+  return isCategoryValid(signal, category) ? signal : null;
+}
+
 function extractCandidatePhrases(html = "", category = "") {
   const title = cleanPhrase(extractTitle(html));
   const ogTitle = cleanPhrase(extractMetaContent(html, "og:title"));
   const description = cleanPhrase(extractMetaContent(html, "description"));
   const ogDescription = cleanPhrase(extractMetaContent(html, "og:description"));
   const h1 = extractTagContent(html, /<h1[^>]*>([\s\S]*?)<\/h1>/i);
-  const bodyText = stripHtml(html).slice(0, 4000);
+  const bodyText = stripHtml(html).slice(0, MAX_BODY_TEXT_CHARS);
 
   const phrases = [
     title,
@@ -365,15 +381,16 @@ function extractCandidatePhrases(html = "", category = "") {
   const bodyCandidates = bodyText
     .split(/[.!?•|]/)
     .map((x) => cleanPhrase(x))
-    .filter((x) => x.length >= 8 && x.length <= 90);
+    .filter((x) => x.length >= 8 && x.length <= 80);
 
   for (const part of bodyCandidates) {
     if (scorePhrase(part, category) >= 3) {
       phrases.push(part);
     }
+    if (phrases.length >= 12) break;
   }
 
-  return [...new Set(phrases)].slice(0, 20);
+  return [...new Set(phrases)].slice(0, 12);
 }
 
 function buildSignalFromPhrase(phrase, source, category, context) {
@@ -460,7 +477,7 @@ function getFallbackSignals(source, category, country) {
     (fallbackMap[category] && fallbackMap[category].TH) ||
     [];
 
-  return set.map((item) => ({
+  return set.slice(0, MAX_SIGNALS_PER_SOURCE).map((item) => ({
     brand: item.brand,
     product: item.product,
     hashtag: inferHashtag(item.product, category, cc),
@@ -517,13 +534,35 @@ async function extractSignalsFromSource(source, category, country) {
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(item);
+    if (deduped.length >= MAX_SIGNALS_PER_SOURCE) break;
   }
 
   if (deduped.length > 0) {
-    return deduped.slice(0, 5);
+    return deduped;
   }
 
   return getFallbackSignals(source, category, cc);
+}
+
+async function runWithConcurrency(items, worker, concurrency = 2) {
+  const results = [];
+  let index = 0;
+
+  async function runner() {
+    while (index < items.length) {
+      const currentIndex = index++;
+      try {
+        results[currentIndex] = await worker(items[currentIndex], currentIndex);
+      } catch {
+        results[currentIndex] = [];
+      }
+    }
+  }
+
+  const runners = Array.from({ length: Math.max(1, concurrency) }, () => runner());
+  await Promise.all(runners);
+
+  return results;
 }
 
 async function runSourceSignalScan({ country, category }) {
@@ -535,19 +574,32 @@ async function runSourceSignalScan({ country, category }) {
     .where("country", "==", normalizedCountry)
     .where("category", "==", normalizedCategory)
     .where("status", "==", "ACTIVE")
-    .limit(10)
+    .limit(MAX_SOURCES_PER_SCAN)
     .get();
 
   const sources = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-  let totalSignals = [];
+  const extractedGroups = await runWithConcurrency(
+    sources,
+    async (source) => {
+      const extracted = await extractSignalsFromSource(
+        source,
+        normalizedCategory,
+        normalizedCountry
+      );
+
+      return extracted.filter((signal) => isCategoryValid(signal, normalizedCategory));
+    },
+    CONCURRENCY
+  );
+
+  let totalSignals = extractedGroups.flat().slice(0, MAX_TOTAL_SIGNALS);
+
   const batch = db.batch();
 
-  for (const source of sources) {
-    const extracted = (await extractSignalsFromSource(source, normalizedCategory, normalizedCountry))
-      .filter((signal) => isCategoryValid(signal, normalizedCategory));
-
-    totalSignals = totalSignals.concat(extracted);
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
+    const extracted = extractedGroups[i] || [];
 
     const signalCount = extracted.length;
     const successCount = Number(source.memory_success_count || 0);
