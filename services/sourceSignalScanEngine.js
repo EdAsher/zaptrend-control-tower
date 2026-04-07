@@ -100,6 +100,23 @@ function containsSnackExcludedTerms(text = "") {
   return blockedTerms.some((term) => t.includes(term));
 }
 
+function containsForeignCountryTerms(text = "", contextCountry = "") {
+  const t = String(text || "").toLowerCase();
+  const cc = normalizeCountry(contextCountry);
+
+  const foreignMap = {
+    SG: ["thai", "thailand", "tom yum", "bangkok", "chiang mai"],
+    TH: ["singapore", "sg snack", "old chang kee", "irvins", "twg"],
+    MY: ["thai", "thailand", "singapore", "sg"],
+    JP: ["thai", "thailand", "singapore", "malaysia"],
+    KR: ["thai", "thailand", "singapore", "malaysia"],
+    VN: ["thai", "thailand", "singapore", "malaysia"]
+  };
+
+  const blocked = foreignMap[cc] || [];
+  return blocked.some((term) => t.includes(term));
+}
+
 function isLowIntentNoise(text = "") {
   const t = String(text || "").toLowerCase();
 
@@ -130,8 +147,9 @@ function isLowIntentNoise(text = "") {
   return false;
 }
 
-function isHighIntentProduct(text = "", category = "") {
+function isHighIntentProduct(text = "", category = "", contextCountry = "") {
   const t = String(text || "").toLowerCase();
+  const cc = normalizeCountry(contextCountry);
 
   if (!t) return false;
   if (containsHtmlLikeGarbage(t)) return false;
@@ -139,6 +157,10 @@ function isHighIntentProduct(text = "", category = "") {
 
   if (category === "snacks_drinks") {
     if (containsSnackExcludedTerms(t)) return false;
+
+    if (cc === "SG" && containsForeignCountryTerms(t, cc)) {
+      return false;
+    }
 
     return (
       t.includes("tea") ||
@@ -336,12 +358,14 @@ function inferHashtag(product = "", category = "", country = "") {
   return "#localfinds";
 }
 
-function isCategoryValid(signal, category) {
+function isCategoryValid(signal, category, contextCountry = "") {
   const cat = String(category || "").toLowerCase();
   const text = `${signal.brand || ""} ${signal.product || ""} ${signal.hashtag || ""}`.toLowerCase();
+  const cc = normalizeCountry(contextCountry);
 
   if (cat === "snacks_drinks") {
     if (containsSnackExcludedTerms(text)) return false;
+    if (cc === "SG" && containsForeignCountryTerms(text, cc)) return false;
 
     return (
       text.includes("tea") ||
@@ -416,7 +440,7 @@ async function fetchHtml(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/22.0A",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/22.0A-clean",
         accept: "text/html,application/xhtml+xml"
       }
     });
@@ -496,13 +520,17 @@ function buildRealSignal({
 
   if (!cleanBrand || !cleanProduct) return null;
   if (containsHtmlLikeGarbage(cleanBrand) || containsHtmlLikeGarbage(cleanProduct)) return null;
-  if (!isHighIntentProduct(`${cleanBrand} ${cleanProduct}`, category)) return null;
+  if (!isHighIntentProduct(`${cleanBrand} ${cleanProduct}`, category, context.country)) return null;
 
   if (category === "souvenirs_local_finds" && containsSouvenirExcludedTerms(`${cleanBrand} ${cleanProduct}`)) {
     return null;
   }
 
   if (category === "snacks_drinks" && containsSnackExcludedTerms(`${cleanBrand} ${cleanProduct}`)) {
+    return null;
+  }
+
+  if (category === "snacks_drinks" && normalizeCountry(context.country) === "SG" && containsForeignCountryTerms(`${cleanBrand} ${cleanProduct}`, context.country)) {
     return null;
   }
 
@@ -523,7 +551,7 @@ function buildRealSignal({
     extraction_method: method
   };
 
-  return isCategoryValid(signal, category) ? signal : null;
+  return isCategoryValid(signal, category, context.country) ? signal : null;
 }
 
 function candidateFromJsonLdObject(obj, source, category, context) {
@@ -540,7 +568,7 @@ function candidateFromJsonLdObject(obj, source, category, context) {
 
   if (!name || name.length < 3) return null;
   if (containsHtmlLikeGarbage(name) || containsHtmlLikeGarbage(brand)) return null;
-  if (!isHighIntentProduct(name, category)) return null;
+  if (!isHighIntentProduct(name, category, context.country)) return null;
 
   return buildRealSignal({
     brand,
@@ -581,9 +609,7 @@ function extractCandidatePhrases(html = "", category = "") {
     .filter((x) => !isLowIntentNoise(x));
 
   for (const part of bodyCandidates) {
-    if (isHighIntentProduct(part, category)) {
-      phrases.push(part);
-    }
+    phrases.push(part);
     if (phrases.length >= 16) break;
   }
 
@@ -622,7 +648,7 @@ function buildSignalFromPhrase(phrase, source, category, context) {
   const cleaned = stripHtmlTags(cleanPhrase(phrase));
   if (!cleaned) return null;
   if (containsHtmlLikeGarbage(cleaned)) return null;
-  if (!isHighIntentProduct(cleaned, category)) return null;
+  if (!isHighIntentProduct(cleaned, category, context.country)) return null;
 
   const { brand, product } = extractBrandProductFromPhrase(cleaned, source);
 
@@ -751,7 +777,7 @@ async function extractSignalsFromSource(source, category, country) {
   );
 
   const combined = dedupeSignals([...jsonLdSignals, ...phraseSignals]).filter(
-    (s) => isHighIntentProduct(`${s.brand} ${s.product}`, category)
+    (s) => isHighIntentProduct(`${s.brand} ${s.product}`, category, adjustedContext.country)
   );
 
   if (combined.length > 0) {
@@ -806,7 +832,9 @@ async function runSourceSignalScan({ country, category }) {
         normalizedCountry
       );
 
-      return extracted.filter((signal) => isCategoryValid(signal, normalizedCategory));
+      return extracted.filter((signal) =>
+        isCategoryValid(signal, normalizedCategory, normalizedCountry)
+      );
     },
     CONCURRENCY
   );
