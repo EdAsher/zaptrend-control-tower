@@ -105,9 +105,9 @@ function containsForeignCountryTerms(text = "", contextCountry = "") {
   const cc = normalizeCountry(contextCountry);
 
   const foreignMap = {
-    SG: ["thai", "thailand", "tom yum", "bangkok", "chiang mai"],
-    TH: ["singapore", "sg snack", "old chang kee", "irvins", "twg"],
-    MY: ["thai", "thailand", "singapore", "sg"],
+    SG: ["thai", "thailand", "tom yum", "bangkok", "chiang mai", "malaysia", "milo malaysia", "dutch lady malaysia"],
+    TH: ["singapore", "sg snack", "old chang kee", "irvins", "twg", "malaysia", "milo malaysia"],
+    MY: ["thai", "thailand", "tom yum", "bangkok", "singapore", "old chang kee", "irvins", "twg"],
     JP: ["thai", "thailand", "singapore", "malaysia"],
     KR: ["thai", "thailand", "singapore", "malaysia"],
     VN: ["thai", "thailand", "singapore", "malaysia"]
@@ -157,10 +157,7 @@ function isHighIntentProduct(text = "", category = "", contextCountry = "") {
 
   if (category === "snacks_drinks") {
     if (containsSnackExcludedTerms(t)) return false;
-
-    if (cc === "SG" && containsForeignCountryTerms(t, cc)) {
-      return false;
-    }
+    if ((cc === "SG" || cc === "MY") && containsForeignCountryTerms(t, cc)) return false;
 
     return (
       t.includes("tea") ||
@@ -179,7 +176,11 @@ function isHighIntentProduct(text = "", category = "", contextCountry = "") {
       t.includes("kaya") ||
       t.includes("biscuit") ||
       t.includes("cracker") ||
-      t.includes("gift set")
+      t.includes("gift set") ||
+      t.includes("milo") ||
+      t.includes("white coffee") ||
+      t.includes("dodol") ||
+      t.includes("muruku")
     );
   }
 
@@ -225,7 +226,7 @@ function getCountryLanguageProfile(country) {
   const map = {
     TH: { primary_language: "th", audience_locale: "th-TH", local_confidence: 0.9 },
     SG: { primary_language: "en", audience_locale: "en-SG", local_confidence: 0.9 },
-    MY: { primary_language: "ms", audience_locale: "ms-MY", local_confidence: 0.86 },
+    MY: { primary_language: "ms", audience_locale: "ms-MY", local_confidence: 0.9 },
     JP: { primary_language: "ja", audience_locale: "ja-JP", local_confidence: 0.9 },
     KR: { primary_language: "ko", audience_locale: "ko-KR", local_confidence: 0.9 },
     VN: { primary_language: "vi", audience_locale: "vi-VN", local_confidence: 0.88 }
@@ -296,6 +297,7 @@ function inferLanguageFromHtml(html = "", fallback = "en") {
   if (/[가-힣]/.test(text)) return "ko";
   if (/[À-ỹ]/.test(text)) return "vi";
   if (/[一-龯]/.test(text)) return "zh";
+  if (/\b(?:dan|dengan|yang|untuk|makanan|minuman|snek)\b/i.test(text)) return "ms";
 
   return fallback;
 }
@@ -331,31 +333,34 @@ function inferHashtag(product = "", category = "", country = "") {
   const cc = normalizeCountry(country);
 
   if (category === "snacks_drinks") {
-    if (p.includes("tea")) return cc === "SG" ? "#sgdrinkfinds" : "#localdrinks";
+    if (p.includes("tea")) return cc === "SG" ? "sgdrinkfinds" : cc === "MY" ? "mydrinkfinds" : "localdrinks";
     if (p.includes("snack") || p.includes("chips") || p.includes("cracker")) {
-      return cc === "SG" ? "#sgsnackfinds" : "#localsnacks";
+      return cc === "SG" ? "sgsnackfinds" : cc === "MY" ? "mysnackfinds" : "localsnacks";
     }
-    if (p.includes("salted egg")) return "#sgsnackfinds";
-    if (p.includes("laksa") || p.includes("kaya")) return "#localfoodsouvenir";
-    if (p.includes("gift set")) return "#sggiftablefood";
-    return "#localfoodfinds";
+    if (p.includes("salted egg")) return cc === "SG" ? "sgsnackfinds" : "localsnacks";
+    if (p.includes("gift set")) return cc === "SG" ? "sggiftablefood" : cc === "MY" ? "mygiftablefood" : "localfoodfinds";
+    if (p.includes("milo")) return "mydrinkfinds";
+    if (p.includes("white coffee")) return "mydrinkfinds";
+    if (p.includes("dodol") || p.includes("muruku")) return "mysnackfinds";
+    if (p.includes("laksa") || p.includes("kaya")) return "localfoodsouvenir";
+    return "localfoodfinds";
   }
 
   if (category === "souvenirs_local_finds") {
-    if (p.includes("craft") || p.includes("handmade")) return "#localcraftfinds";
-    if (p.includes("silk")) return "#localsouvenir";
-    if (p.includes("ceramic")) return "#heritagefinds";
-    if (p.includes("bag")) return "#giftablefinds";
-    return "#giftablefinds";
+    if (p.includes("craft") || p.includes("handmade")) return "localcraftfinds";
+    if (p.includes("silk")) return "localsouvenir";
+    if (p.includes("ceramic")) return "heritagefinds";
+    if (p.includes("bag")) return "giftablefinds";
+    return "giftablefinds";
   }
 
   if (category === "fashion_accessories") {
-    if (p.includes("bag") || p.includes("tote") || p.includes("handbag")) return "#localstylefinds";
-    if (p.includes("earring") || p.includes("bracelet") || p.includes("necklace")) return "#accessorytrend";
-    return "#localfashionfinds";
+    if (p.includes("bag") || p.includes("tote") || p.includes("handbag")) return "localstylefinds";
+    if (p.includes("earring") || p.includes("bracelet") || p.includes("necklace")) return "accessorytrend";
+    return "localfashionfinds";
   }
 
-  return "#localfinds";
+  return "localfinds";
 }
 
 function isCategoryValid(signal, category, contextCountry = "") {
@@ -365,7 +370,7 @@ function isCategoryValid(signal, category, contextCountry = "") {
 
   if (cat === "snacks_drinks") {
     if (containsSnackExcludedTerms(text)) return false;
-    if (cc === "SG" && containsForeignCountryTerms(text, cc)) return false;
+    if ((cc === "SG" || cc === "MY") && containsForeignCountryTerms(text, cc)) return false;
 
     return (
       text.includes("tea") ||
@@ -385,7 +390,11 @@ function isCategoryValid(signal, category, contextCountry = "") {
       text.includes("salted egg") ||
       text.includes("cracker") ||
       text.includes("biscuit") ||
-      text.includes("gift set")
+      text.includes("gift set") ||
+      text.includes("milo") ||
+      text.includes("white coffee") ||
+      text.includes("dodol") ||
+      text.includes("muruku")
     );
   }
 
@@ -440,7 +449,7 @@ async function fetchHtml(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/22.0A-clean",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/22.0B",
         accept: "text/html,application/xhtml+xml"
       }
     });
@@ -530,7 +539,7 @@ function buildRealSignal({
     return null;
   }
 
-  if (category === "snacks_drinks" && normalizeCountry(context.country) === "SG" && containsForeignCountryTerms(`${cleanBrand} ${cleanProduct}`, context.country)) {
+  if (category === "snacks_drinks" && (normalizeCountry(context.country) === "SG" || normalizeCountry(context.country) === "MY") && containsForeignCountryTerms(`${cleanBrand} ${cleanProduct}`, context.country)) {
     return null;
   }
 
@@ -700,6 +709,11 @@ function getFallbackSignals(source, category, country) {
         { brand: "Irvins", product: "Salted Egg Snacks" },
         { brand: "TWG", product: "Tea Gift Sets" },
         { brand: "Old Chang Kee", product: "Snack Packs" }
+      ],
+      MY: [
+        { brand: "Milo", product: "Milo Sachet Packs" },
+        { brand: "OldTown", product: "White Coffee Sachets" },
+        { brand: "Muar", product: "Dodol Gift Packs" }
       ]
     },
     souvenirs_local_finds: {
