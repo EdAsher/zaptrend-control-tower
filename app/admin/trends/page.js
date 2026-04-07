@@ -10,6 +10,45 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const API_BASE =
   (process.env.NEXT_PUBLIC_ZAPTREND_API_BASE || "").replace(/\/$/, "");
 
+const COUNTRY_OPTIONS = [
+  { value: "SG", label: "SG" },
+  { value: "TH", label: "TH" },
+  { value: "MY", label: "MY" },
+  { value: "IN", label: "IN" },
+  { value: "VN", label: "VN" },
+  { value: "PH", label: "PH" },
+  { value: "HK", label: "HK" },
+  { value: "TW", label: "TW" },
+  { value: "KR", label: "KR" },
+  { value: "AU", label: "AU" },
+  { value: "JP", label: "JP" },
+  { value: "ID", label: "ID" }
+];
+
+const CATEGORY_OPTIONS = [
+  { value: "baby_kids", label: "baby_kids" },
+  { value: "beauty_skincare", label: "beauty_skincare" },
+  { value: "deals_duty_free", label: "deals_duty_free" },
+  { value: "electronics_gadgets", label: "electronics_gadgets" },
+  { value: "fashion_accessories", label: "fashion_accessories" },
+  { value: "health_pharmacy", label: "health_pharmacy" },
+  { value: "home_living", label: "home_living" },
+  { value: "luxury_designer", label: "luxury_designer" },
+  { value: "other", label: "other" },
+  { value: "snacks_drinks", label: "snacks_drinks" },
+  { value: "souvenirs_local_finds", label: "souvenirs_local_finds" },
+  { value: "sports_outdoors", label: "sports_outdoors" },
+  { value: "stationery_books", label: "stationery_books" },
+  { value: "toys_collectibles", label: "toys_collectibles" }
+];
+
+const STATUS_OPTIONS = [
+  { value: "", label: "All Statuses" },
+  { value: "HOT", label: "HOT" },
+  { value: "TRENDING", label: "TRENDING" },
+  { value: "WATCHLIST", label: "WATCHLIST" }
+];
+
 const DEFAULT_FILTERS = {
   country: "TH",
   category: "beauty_skincare",
@@ -496,24 +535,27 @@ export default function TrendsPage() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-5">
-          <FieldInput
+          <SelectField
             label="Country"
             value={filters.country}
-            placeholder="TH"
-            onChange={(e) => updateFilter("country", e.target.value.toUpperCase())}
+            onChange={(e) => updateFilter("country", e.target.value)}
+            options={COUNTRY_OPTIONS}
           />
-          <FieldInput
+
+          <SelectField
             label="Category"
             value={filters.category}
-            placeholder="beauty_skincare"
             onChange={(e) => updateFilter("category", e.target.value)}
+            options={CATEGORY_OPTIONS}
           />
-          <FieldInput
+
+          <SelectField
             label="Status"
             value={filters.status}
-            placeholder="HOT / TRENDING / WATCHLIST"
             onChange={(e) => updateFilter("status", e.target.value)}
+            options={STATUS_OPTIONS}
           />
+
           <SelectField
             label="Source Mix"
             value={filters.sourceMix}
@@ -525,6 +567,7 @@ export default function TrendsPage() {
               { value: "dual", label: "Dual Confirmed" }
             ]}
           />
+
           <FieldInput
             label="Limit"
             type="number"
