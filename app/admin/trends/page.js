@@ -49,6 +49,13 @@ const STATUS_OPTIONS = [
   { value: "WATCHLIST", label: "WATCHLIST" }
 ];
 
+const SOURCE_MIX_OPTIONS = [
+  { value: "all", label: "All Mixes" },
+  { value: "stable", label: "Stable Only" },
+  { value: "social", label: "Social Only" },
+  { value: "dual", label: "Dual Confirmed" }
+];
+
 const DEFAULT_FILTERS = {
   country: "TH",
   category: "beauty_skincare",
@@ -95,7 +102,9 @@ function formatDateTime(value) {
 }
 
 function getSourceTypeSet(sourceTypes = []) {
-  return new Set((sourceTypes || []).map((x) => String(x || "").trim().toLowerCase()));
+  return new Set(
+    (sourceTypes || []).map((x) => String(x || "").trim().toLowerCase())
+  );
 }
 
 function getSignalMix(item) {
@@ -122,8 +131,12 @@ function getConfidenceLabel(item) {
   const mentions = Number(item.total_mentions || 0);
   const cumulative = Number(item.cumulative_score || 0);
 
-  if (mix === "dual" && mentions >= 20 && cumulative >= 500) return "High Confidence";
-  if (mix === "social" && mentions < 10) return "Early Signal";
+  if (mix === "dual" && mentions >= 20 && cumulative >= 500) {
+    return "High Confidence";
+  }
+  if (mix === "social" && mentions < 10) {
+    return "Early Signal";
+  }
   return "Validated";
 }
 
@@ -227,17 +240,28 @@ function SelectField({ label, value, onChange, options }) {
       <div className="mb-2 text-xs uppercase tracking-[0.16em] text-zinc-500">
         {label}
       </div>
-      <select
-        value={value}
-        onChange={onChange}
-        className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/40 focus:bg-black/30"
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value} className="bg-zinc-900">
-            {option.label}
-          </option>
-        ))}
-      </select>
+
+      <div className="relative">
+        <select
+          value={value}
+          onChange={onChange}
+          className="w-full appearance-none rounded-2xl border border-white/10 bg-black/20 px-4 py-3 pr-10 text-sm text-white outline-none transition focus:border-cyan-400/40 focus:bg-black/30"
+        >
+          {options.map((option) => (
+            <option
+              key={option.value}
+              value={option.value}
+              className="bg-zinc-900 text-white"
+            >
+              {option.label}
+            </option>
+          ))}
+        </select>
+
+        <div className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-zinc-400">
+          ▼
+        </div>
+      </div>
     </label>
   );
 }
@@ -401,32 +425,35 @@ export default function TrendsPage() {
   const [runningAutomation, setRunningAutomation] = useState(false);
   const [automationMessage, setAutomationMessage] = useState("");
 
-  const load = useCallback(async (activeFilters = filters) => {
-    try {
-      setLoading(true);
-      setError("");
+  const load = useCallback(
+    async (activeFilters = filters) => {
+      try {
+        setLoading(true);
+        setError("");
 
-      const qs = new URLSearchParams();
-      qs.set("country", activeFilters.country);
-      qs.set("category", activeFilters.category);
-      if (activeFilters.status) qs.set("status", activeFilters.status);
-      qs.set("limit", String(activeFilters.limit));
+        const qs = new URLSearchParams();
+        qs.set("country", activeFilters.country);
+        qs.set("category", activeFilters.category);
+        if (activeFilters.status) qs.set("status", activeFilters.status);
+        qs.set("limit", String(activeFilters.limit));
 
-      const [outputsRes, runsRes] = await Promise.all([
-        fetchJson(`/admin/trends/outputs?${qs.toString()}`),
-        fetchJson(
-          `/admin/trends/runs?country=${activeFilters.country}&category=${activeFilters.category}&limit=10`
-        )
-      ]);
+        const [outputsRes, runsRes] = await Promise.all([
+          fetchJson(`/admin/trends/outputs?${qs.toString()}`),
+          fetchJson(
+            `/admin/trends/runs?country=${activeFilters.country}&category=${activeFilters.category}&limit=10`
+          )
+        ]);
 
-      setOutputs(outputsRes.rows || []);
-      setRuns(runsRes.rows || []);
-    } catch (err) {
-      setError(err.message || String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [filters]);
+        setOutputs(outputsRes.rows || []);
+        setRuns(runsRes.rows || []);
+      } catch (err) {
+        setError(err.message || String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [filters]
+  );
 
   useEffect(() => {
     load(DEFAULT_FILTERS);
@@ -439,9 +466,15 @@ export default function TrendsPage() {
   const summary = useMemo(() => {
     return {
       total: filteredOutputs.length,
-      hot: filteredOutputs.filter((x) => String(x.trend_status).toUpperCase() === "HOT").length,
-      trending: filteredOutputs.filter((x) => String(x.trend_status).toUpperCase() === "TRENDING").length,
-      watchlist: filteredOutputs.filter((x) => String(x.trend_status).toUpperCase() === "WATCHLIST").length,
+      hot: filteredOutputs.filter(
+        (x) => String(x.trend_status).toUpperCase() === "HOT"
+      ).length,
+      trending: filteredOutputs.filter(
+        (x) => String(x.trend_status).toUpperCase() === "TRENDING"
+      ).length,
+      watchlist: filteredOutputs.filter(
+        (x) => String(x.trend_status).toUpperCase() === "WATCHLIST"
+      ).length,
       runs: runs.length
     };
   }, [filteredOutputs, runs]);
@@ -560,12 +593,7 @@ export default function TrendsPage() {
             label="Source Mix"
             value={filters.sourceMix}
             onChange={(e) => updateFilter("sourceMix", e.target.value)}
-            options={[
-              { value: "all", label: "All Mixes" },
-              { value: "stable", label: "Stable Only" },
-              { value: "social", label: "Social Only" },
-              { value: "dual", label: "Dual Confirmed" }
-            ]}
+            options={SOURCE_MIX_OPTIONS}
           />
 
           <FieldInput
@@ -603,7 +631,11 @@ export default function TrendsPage() {
             <AdminSurface>No trend outputs found.</AdminSurface>
           ) : (
             filteredOutputs.map((item, i) => (
-              <AdminSurface key={item.id || `${item.brand}-${item.product}-${i}`} hover glow="cyan">
+              <AdminSurface
+                key={item.id || `${item.brand}-${item.product}-${i}`}
+                hover
+                glow="cyan"
+              >
                 <TrendCard item={item} rank={i + 1} />
               </AdminSurface>
             ))
@@ -615,9 +647,7 @@ export default function TrendsPage() {
             <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
               Recent Runs
             </div>
-            <div className="text-xs text-zinc-500">
-              Top 10
-            </div>
+            <div className="text-xs text-zinc-500">Top 10</div>
           </div>
 
           <div className="space-y-3">
