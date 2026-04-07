@@ -45,6 +45,41 @@ function containsHtmlLikeGarbage(value = "") {
   );
 }
 
+function containsSouvenirExcludedTerms(text = "") {
+  const t = String(text || "").toLowerCase();
+
+  const blockedTerms = [
+    "edible insect",
+    "edible insects",
+    "insect",
+    "insects",
+    "cricket",
+    "crickets",
+    "silkworm",
+    "silkworms",
+    "worm",
+    "worms",
+    "grasshopper",
+    "grasshoppers",
+    "beetle",
+    "beetles",
+    "larvae",
+    "larva",
+    "snack insect",
+    "protein snack",
+    "field crickets",
+    "eat insects",
+    "why eat edible insects",
+    "worldwide shipping",
+    "shipping worldwide",
+    "us uk japan",
+    "international shipping",
+    "global delivery"
+  ];
+
+  return blockedTerms.some((term) => t.includes(term));
+}
+
 function isLowIntentNoise(text = "") {
   const t = String(text || "").toLowerCase();
 
@@ -99,6 +134,8 @@ function isHighIntentProduct(text = "", category = "") {
   }
 
   if (category === "souvenirs_local_finds") {
+    if (containsSouvenirExcludedTerms(t)) return false;
+
     return (
       t.includes("souvenir") ||
       t.includes("craft") ||
@@ -136,45 +173,19 @@ function getCountryLanguageProfile(country) {
   const cc = normalizeCountry(country);
 
   const map = {
-    TH: {
-      primary_language: "th",
-      audience_locale: "th-TH",
-      local_confidence: 0.9
-    },
-    SG: {
-      primary_language: "en",
-      audience_locale: "en-SG",
-      local_confidence: 0.88
-    },
-    MY: {
-      primary_language: "ms",
-      audience_locale: "ms-MY",
-      local_confidence: 0.86
-    },
-    JP: {
-      primary_language: "ja",
-      audience_locale: "ja-JP",
-      local_confidence: 0.9
-    },
-    KR: {
-      primary_language: "ko",
-      audience_locale: "ko-KR",
-      local_confidence: 0.9
-    },
-    VN: {
-      primary_language: "vi",
-      audience_locale: "vi-VN",
-      local_confidence: 0.88
-    }
+    TH: { primary_language: "th", audience_locale: "th-TH", local_confidence: 0.9 },
+    SG: { primary_language: "en", audience_locale: "en-SG", local_confidence: 0.88 },
+    MY: { primary_language: "ms", audience_locale: "ms-MY", local_confidence: 0.86 },
+    JP: { primary_language: "ja", audience_locale: "ja-JP", local_confidence: 0.9 },
+    KR: { primary_language: "ko", audience_locale: "ko-KR", local_confidence: 0.9 },
+    VN: { primary_language: "vi", audience_locale: "vi-VN", local_confidence: 0.88 }
   };
 
-  return (
-    map[cc] || {
-      primary_language: "en",
-      audience_locale: cc,
-      local_confidence: 0.8
-    }
-  );
+  return map[cc] || {
+    primary_language: "en",
+    audience_locale: cc,
+    local_confidence: 0.8
+  };
 }
 
 function decodeHtml(value = "") {
@@ -316,6 +327,8 @@ function isCategoryValid(signal, category) {
   }
 
   if (cat === "souvenirs_local_finds") {
+    if (containsSouvenirExcludedTerms(text)) return false;
+
     return (
       text.includes("souvenir") ||
       text.includes("craft") ||
@@ -351,28 +364,6 @@ function isCategoryValid(signal, category) {
   return true;
 }
 
-function scorePhrase(phrase = "", category = "") {
-  const text = phrase.toLowerCase();
-  let score = 0;
-
-  if (category === "snacks_drinks") {
-    if (/(snack|drink|tea|coffee|milk|juice|seaweed|noodle|flavor|soda|laksa|kaya|chips|candy|yogurt|food)/i.test(text)) score += 3;
-    if (/(limited|exclusive|local|popular|best|viral|gift|souvenir)/i.test(text)) score += 1;
-  }
-
-  if (category === "souvenirs_local_finds") {
-    if (/(souvenir|gift|craft|artisan|handmade|silk|ceramic|tableware|market|local|heritage|culture|scarf|bag)/i.test(text)) score += 3;
-    if (/(exclusive|traditional|authentic|local|bangkok|chiang mai|thai)/i.test(text)) score += 1;
-  }
-
-  if (category === "fashion_accessories") {
-    if (/(bag|wallet|earring|bracelet|necklace|tote|handbag|accessories|fashion|style|jewelry)/i.test(text)) score += 3;
-    if (/(trend|viral|local|designer|minimal|edit)/i.test(text)) score += 1;
-  }
-
-  return score;
-}
-
 async function fetchHtml(url) {
   let controller;
   let timeout;
@@ -386,7 +377,7 @@ async function fetchHtml(url) {
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0C",
+        "user-agent": "Mozilla/5.0 ZapTrendBot/21.0D",
         accept: "text/html,application/xhtml+xml"
       }
     });
@@ -467,6 +458,7 @@ function buildRealSignal({
   if (!cleanBrand || !cleanProduct) return null;
   if (containsHtmlLikeGarbage(cleanBrand) || containsHtmlLikeGarbage(cleanProduct)) return null;
   if (!isHighIntentProduct(`${cleanBrand} ${cleanProduct}`, category)) return null;
+  if (category === "souvenirs_local_finds" && containsSouvenirExcludedTerms(`${cleanBrand} ${cleanProduct}`)) return null;
 
   const signal = {
     brand: cleanBrand || safeDomainLabel(source.domain),
@@ -503,6 +495,7 @@ function candidateFromJsonLdObject(obj, source, category, context) {
   if (!name || name.length < 3) return null;
   if (containsHtmlLikeGarbage(name) || containsHtmlLikeGarbage(brand)) return null;
   if (!isHighIntentProduct(name, category)) return null;
+  if (category === "souvenirs_local_finds" && containsSouvenirExcludedTerms(`${brand} ${name}`)) return null;
 
   return buildRealSignal({
     brand,
@@ -533,17 +526,19 @@ function extractCandidatePhrases(html = "", category = "") {
     .filter(Boolean)
     .filter((x) => x.length >= 4 && x.length <= 120)
     .filter((x) => !containsHtmlLikeGarbage(x))
-    .filter((x) => !isLowIntentNoise(x));
+    .filter((x) => !isLowIntentNoise(x))
+    .filter((x) => !containsSouvenirExcludedTerms(x));
 
   const bodyCandidates = bodyText
     .split(/[.!?•|]/)
     .map((x) => cleanPhrase(x))
     .filter((x) => x.length >= 10 && x.length <= 90)
     .filter((x) => !containsHtmlLikeGarbage(x))
-    .filter((x) => !isLowIntentNoise(x));
+    .filter((x) => !isLowIntentNoise(x))
+    .filter((x) => !containsSouvenirExcludedTerms(x));
 
   for (const part of bodyCandidates) {
-    if (scorePhrase(part, category) >= 3 && isHighIntentProduct(part, category)) {
+    if (isHighIntentProduct(part, category)) {
       phrases.push(part);
     }
     if (phrases.length >= 16) break;
@@ -585,12 +580,14 @@ function buildSignalFromPhrase(phrase, source, category, context) {
   if (!cleaned) return null;
   if (containsHtmlLikeGarbage(cleaned)) return null;
   if (!isHighIntentProduct(cleaned, category)) return null;
+  if (category === "souvenirs_local_finds" && containsSouvenirExcludedTerms(cleaned)) return null;
 
   const { brand, product } = extractBrandProductFromPhrase(cleaned, source);
 
   if (!product || product.length < 4) return null;
   if (product.length > 110) return null;
   if (containsHtmlLikeGarbage(brand) || containsHtmlLikeGarbage(product)) return null;
+  if (category === "souvenirs_local_finds" && containsSouvenirExcludedTerms(`${brand} ${product}`)) return null;
 
   return buildRealSignal({
     brand,
@@ -713,7 +710,9 @@ async function extractSignalsFromSource(source, category, country) {
   );
 
   const combined = dedupeSignals([...jsonLdSignals, ...phraseSignals]).filter(
-    (s) => isHighIntentProduct(`${s.brand} ${s.product}`, category)
+    (s) =>
+      isHighIntentProduct(`${s.brand} ${s.product}`, category) &&
+      !(category === "souvenirs_local_finds" && containsSouvenirExcludedTerms(`${s.brand} ${s.product}`))
   );
 
   if (combined.length > 0) {
