@@ -1,510 +1,57 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import AdminShell from "../../../components/admin/AdminShell";
 import AdminPageHeader from "../../../components/admin/AdminPageHeader";
 import AdminSurface from "../../../components/admin/AdminSurface";
-import AdminMetricCard from "../../../components/admin/AdminMetricCard";
-import AdminActionButton from "../../../components/admin/AdminActionButton";
-
-import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE =
   (process.env.NEXT_PUBLIC_ZAPTREND_API_BASE || "").replace(/\/$/, "");
 
-// ================= API =================
-async function fetchSources(params = {}) {
-  const qs = new URLSearchParams();
-
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && String(value).trim() !== "") {
-      qs.set(key, String(value));
-    }
-  });
-
-  const url = `${API_BASE}/admin/sources${qs.toString() ? `?${qs}` : ""}`;
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store"
-  });
-
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    throw new Error(data?.error || `Request failed: ${res.status}`);
-  }
-
-  return data;
-}
-
-async function postAction(path, body) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok || data?.ok === false) {
-    throw new Error(data?.error || `Request failed: ${res.status}`);
-  }
-
-  return data;
-}
-
-// ================= HELPERS =================
-function safeText(value, fallback = "-") {
-  if (value === undefined || value === null || value === "") return fallback;
-  return String(value);
-}
-
-function formatDateLike(value) {
-  if (!value) return "-";
-
-  if (typeof value === "string") return value;
-
-  if (value?._seconds) {
-    try {
-      return new Date(value._seconds * 1000).toISOString();
-    } catch {
-      return "-";
-    }
-  }
-
-  return "-";
-}
-
-function Pill({ children }) {
-  return (
-    <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-200">
-      {children}
-    </span>
-  );
-}
-
-function HealthPill({ status }) {
-  const normalized = String(status || "unknown").toLowerCase();
-
-  const styles =
-    normalized === "healthy"
-      ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300"
-      : normalized === "warning"
-      ? "border-amber-400/30 bg-amber-500/10 text-amber-300"
-      : normalized === "dead"
-      ? "border-rose-400/30 bg-rose-500/10 text-rose-300"
-      : normalized === "disabled"
-      ? "border-zinc-400/20 bg-zinc-500/10 text-zinc-300"
-      : "border-cyan-400/20 bg-cyan-500/10 text-cyan-300";
-
-  return (
-    <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium ${styles}`}
-    >
-      {safeText(normalized)}
-    </span>
-  );
-}
-
-// ================= TABLE =================
-function SourcesTable({ title, rows, type, onRecheck, onDisable, onEnable }) {
-  const topScrollRef = useRef(null);
-  const bottomScrollRef = useRef(null);
-  const topInnerRef = useRef(null);
-
-  useEffect(() => {
-    function syncWidths() {
-      if (!bottomScrollRef.current || !topInnerRef.current) return;
-      topInnerRef.current.style.width = `${bottomScrollRef.current.scrollWidth}px`;
-    }
-
-    syncWidths();
-    window.addEventListener("resize", syncWidths);
-
-    return () => window.removeEventListener("resize", syncWidths);
-  }, [rows]);
-
-  function handleTopScroll(e) {
-    if (bottomScrollRef.current) {
-      bottomScrollRef.current.scrollLeft = e.target.scrollLeft;
-    }
-  }
-
-  function handleBottomScroll(e) {
-    if (topScrollRef.current) {
-      topScrollRef.current.scrollLeft = e.target.scrollLeft;
-    }
-  }
-
-  return (
-    <div className="rounded-3xl border border-white/10 bg-zinc-900/70 p-5 backdrop-blur">
-      <div className="mb-4 flex items-center justify-between">
-        <div className="text-base font-semibold text-white">{title}</div>
-        <Pill>{rows.length} rows</Pill>
-      </div>
-
-      <div
-        ref={topScrollRef}
-        onScroll={handleTopScroll}
-        className="mb-3 overflow-x-auto overflow-y-hidden"
-      >
-        <div ref={topInnerRef} className="h-3" />
-      </div>
-
-      <div
-        ref={bottomScrollRef}
-        onScroll={handleBottomScroll}
-        className="overflow-x-auto"
-      >
-        <table className="min-w-full text-left text-sm">
-          <thead className="text-zinc-400">
-            <tr className="border-b border-white/10">
-              <th className="px-3 py-3">Source</th>
-              <th className="px-3 py-3">Country</th>
-              <th className="px-3 py-3">Category</th>
-              <th className="px-3 py-3">Domain</th>
-              <th className="px-3 py-3">Status</th>
-              <th className="px-3 py-3">Health</th>
-              <th className="px-3 py-3">Quality</th>
-              <th className="px-3 py-3">Reputation</th>
-              <th className="px-3 py-3">Trial</th>
-              <th className="px-3 py-3">Updated</th>
-              <th className="px-3 py-3">Actions</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={11} className="px-3 py-6 text-center text-zinc-500">
-                  No records found.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => {
-                const sourceId = row.source_id || row.candidate_id || row.id;
-
-                return (
-                  <tr key={`${type}-${sourceId}`} className="border-b border-white/5">
-                    <td className="px-3 py-3 text-white">
-                      <div className="font-medium">{safeText(sourceId)}</div>
-                      <div className="text-xs text-zinc-500">
-                        {safeText(row.source_kind)}
-                      </div>
-                    </td>
-
-                    <td className="px-3 py-3">{safeText(row.country)}</td>
-                    <td className="px-3 py-3">{safeText(row.category)}</td>
-
-                    <td className="px-3 py-3">
-                      <div>{safeText(row.domain)}</div>
-                      {row.url && (
-                        <a
-                          href={row.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs text-orange-300 hover:underline"
-                        >
-                          Open
-                        </a>
-                      )}
-                    </td>
-
-                    <td className="px-3 py-3">{safeText(row.status)}</td>
-
-                    <td className="px-3 py-3">
-                      <div className="flex flex-col gap-1">
-                        <HealthPill status={row.health_status} />
-                        {row.health_http_status ? (
-                          <span className="text-[10px] text-zinc-500">
-                            HTTP {row.health_http_status}
-                          </span>
-                        ) : null}
-                        {Number(row.health_fail_count || 0) > 0 ? (
-                          <span className="text-[10px] text-rose-300">
-                            fails: {row.health_fail_count}
-                          </span>
-                        ) : null}
-                        {row.auto_disabled ? (
-                          <span className="text-[10px] text-amber-300">
-                            auto-disabled
-                          </span>
-                        ) : null}
-                      </div>
-                    </td>
-
-                    <td className="px-3 py-3">{safeText(row.quality_score, "0")}</td>
-                    <td className="px-3 py-3">
-                      {safeText(row.source_reputation_score, "0")}
-                    </td>
-                    <td className="px-3 py-3">{safeText(row.trial_status)}</td>
-                    <td className="px-3 py-3">{formatDateLike(row.updated_at_iso)}</td>
-
-                    <td className="px-3 py-3">
-                      <div className="flex gap-2 flex-wrap">
-                        <AdminActionButton
-                          label="Recheck"
-                          tone="cyan"
-                          onClick={() =>
-                            onRecheck(sourceId, row.source_kind, row.country, row.category)
-                          }
-                        />
-                        <AdminActionButton
-                          label="Disable"
-                          tone="pink"
-                          onClick={() => onDisable(sourceId, row.source_kind)}
-                        />
-                        <AdminActionButton
-                          label="Enable"
-                          tone="emerald"
-                          onClick={() => onEnable(sourceId, row.source_kind)}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ================= PAGE =================
 export default function SourcesPage() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState("");
-  const [loadingAction, setLoadingAction] = useState(false);
+  const [data, setData] = useState([]);
 
   async function load() {
-    try {
-      setError("");
-      const result = await fetchSources({
-        country: "TH",
-        category: "beauty_skincare"
-      });
-      setData(result);
-    } catch (err) {
-      setError(err.message || String(err));
-    }
+    const res = await fetch(`${API_BASE}/admin/lite/sources`);
+    const json = await res.json();
+    setData(json.results || []);
   }
 
   useEffect(() => {
     load();
   }, []);
 
-  async function handleRecheck(id, kind, country, category) {
-    try {
-      setLoadingAction(true);
-      setError("");
-      await postAction("/admin/sources/recheck", {
-        source_id: id,
-        source_kind: kind,
-        country,
-        category
-      });
-      await load();
-    } catch (err) {
-      setError(err.message || String(err));
-    } finally {
-      setLoadingAction(false);
-    }
-  }
-
-  async function handleDisable(id, kind) {
-    try {
-      setLoadingAction(true);
-      setError("");
-      await postAction("/admin/sources/disable", {
-        source_id: id,
-        source_kind: kind
-      });
-      await load();
-    } catch (err) {
-      setError(err.message || String(err));
-    } finally {
-      setLoadingAction(false);
-    }
-  }
-
-  async function handleEnable(id, kind) {
-    try {
-      setLoadingAction(true);
-      setError("");
-      await postAction("/admin/sources/enable", {
-        source_id: id,
-        source_kind: kind
-      });
-      await load();
-    } catch (err) {
-      setError(err.message || String(err));
-    } finally {
-      setLoadingAction(false);
-    }
-  }
-
-  const allAiSources = useMemo(() => data?.ai_sources || [], [data]);
-  const allCandidates = useMemo(() => data?.candidates || [], [data]);
-  const summary = data?.summary || {};
-
-  const activeAiSources = useMemo(
-    () =>
-      allAiSources.filter(
-        (row) =>
-          row.is_active === true &&
-          row.auto_disabled !== true &&
-          String(row.health_status || "").toLowerCase() !== "dead"
-      ),
-    [allAiSources]
-  );
-
-  const deadOrDisabledAiSources = useMemo(
-    () =>
-      allAiSources.filter(
-        (row) =>
-          row.is_active === false ||
-          row.auto_disabled === true ||
-          ["dead", "disabled"].includes(String(row.health_status || "").toLowerCase())
-      ),
-    [allAiSources]
-  );
-
-  const pendingCandidates = useMemo(
-    () =>
-      allCandidates.filter(
-        (row) => String(row.trial_status || "").toUpperCase() !== "TRIAL_REJECTED"
-      ),
-    [allCandidates]
-  );
-
-  const rejectedCandidates = useMemo(
-    () =>
-      allCandidates.filter(
-        (row) => String(row.trial_status || "").toUpperCase() === "TRIAL_REJECTED"
-      ),
-    [allCandidates]
-  );
-
   return (
     <AdminShell>
-      <AdminPageHeader
-        title="Sources Intelligence"
-        subtitle="Separate intake candidates from curated AI sources, while preserving dead and disabled registry history."
-      />
+      <AdminPageHeader title="Social Sources" />
 
-      {error ? (
-        <div className="mb-6 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
-          {error}
-        </div>
-      ) : null}
+      <AdminSurface>
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Platform</th>
+              <th>Country</th>
+              <th>Category</th>
+              <th>Health</th>
+              <th>Last Checked</th>
+            </tr>
+          </thead>
 
-      <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <AdminMetricCard title="Active Sources" value={summary.active_ai_sources} accent="emerald" />
-        <AdminMetricCard title="Candidates" value={summary.candidate_sources} />
-        <AdminMetricCard title="Promoted" value={summary.promoted_candidates} accent="cyan" />
-        <AdminMetricCard title="Approved" value={summary.trial_approved} accent="emerald" />
-        <AdminMetricCard title="Rejected" value={summary.trial_rejected} accent="rose" />
-      </div>
-
-      <AdminSurface className="mb-8">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="text-xs uppercase text-zinc-500">Lifecycle Summary</div>
-          {loadingAction ? (
-            <div className="text-xs text-cyan-300">Updating source...</div>
-          ) : null}
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Active AI Sources
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-white">
-              {activeAiSources.length}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Dead / Disabled AI Sources
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-white">
-              {deadOrDisabledAiSources.length}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Pending / Trialing Candidates
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-white">
-              {pendingCandidates.length}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
-              Rejected Candidates
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-white">
-              {rejectedCandidates.length}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex gap-3">
-          <AdminActionButton label="Refresh" tone="orange" onClick={() => load()} />
-        </div>
+          <tbody>
+            {data.map((s) => (
+              <tr key={s.source_id}>
+                <td>{s.source_id}</td>
+                <td>{s.platform}</td>
+                <td>{s.country}</td>
+                <td>{s.category}</td>
+                <td>{s.health_status}</td>
+                <td>{s.last_checked}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </AdminSurface>
-
-      <div className="mb-8 space-y-6">
-        <AdminSurface>
-          <SourcesTable
-            title="Active AI Sources"
-            rows={activeAiSources}
-            type="active-ai"
-            onRecheck={handleRecheck}
-            onDisable={handleDisable}
-            onEnable={handleEnable}
-          />
-        </AdminSurface>
-
-        <AdminSurface>
-          <SourcesTable
-            title="Dead / Disabled AI Sources"
-            rows={deadOrDisabledAiSources}
-            type="dead-ai"
-            onRecheck={handleRecheck}
-            onDisable={handleDisable}
-            onEnable={handleEnable}
-          />
-        </AdminSurface>
-
-        <AdminSurface>
-          <SourcesTable
-            title="Pending / Trialing Candidates"
-            rows={pendingCandidates}
-            type="pending-candidates"
-            onRecheck={handleRecheck}
-            onDisable={handleDisable}
-            onEnable={handleEnable}
-          />
-        </AdminSurface>
-
-        <AdminSurface>
-          <SourcesTable
-            title="Rejected Candidates"
-            rows={rejectedCandidates}
-            type="rejected-candidates"
-            onRecheck={handleRecheck}
-            onDisable={handleDisable}
-            onEnable={handleEnable}
-          />
-        </AdminSurface>
-      </div>
     </AdminShell>
   );
 }
