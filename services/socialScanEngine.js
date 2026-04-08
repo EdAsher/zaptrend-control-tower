@@ -28,108 +28,6 @@ function buildRunId(country, category) {
   return `social_${safeId(country)}_${safeId(category)}_${Date.now()}`;
 }
 
-function getSeedSources(country, category) {
-  const c = String(country || "TH").toUpperCase();
-  const k = String(category || "beauty_skincare").toLowerCase();
-
-  const presets = {
-    TH: {
-      beauty_skincare: [
-        {
-          source_id: "th_beauty_reviewer_1",
-          platform: "instagram",
-          handle: "@thbeautyreviewer1",
-          display_name: "TH Beauty Reviewer 1",
-          url: "https://instagram.com/thbeautyreviewer1"
-        },
-        {
-          source_id: "th_beauty_reviewer_2",
-          platform: "tiktok",
-          handle: "@thbeautyreviewer2",
-          display_name: "TH Beauty Reviewer 2",
-          url: "https://tiktok.com/@thbeautyreviewer2"
-        },
-        {
-          source_id: "th_beauty_blog_1",
-          platform: "blog",
-          handle: "thbeautyblog1",
-          display_name: "TH Beauty Blog 1",
-          url: "https://example.com/thbeautyblog1"
-        }
-      ],
-      snacks_drinks: [
-        {
-          source_id: "th_snack_reviewer_1",
-          platform: "instagram",
-          handle: "@thsnackreviewer1",
-          display_name: "TH Snack Reviewer 1",
-          url: "https://instagram.com/thsnackreviewer1"
-        },
-        {
-          source_id: "th_snack_reviewer_2",
-          platform: "tiktok",
-          handle: "@thsnackreviewer2",
-          display_name: "TH Snack Reviewer 2",
-          url: "https://tiktok.com/@thsnackreviewer2"
-        }
-      ]
-    },
-    SG: {
-      snacks_drinks: [
-        {
-          source_id: "sg_snack_reviewer_1",
-          platform: "instagram",
-          handle: "@sgsnackreviewer1",
-          display_name: "SG Snack Reviewer 1",
-          url: "https://instagram.com/sgsnackreviewer1"
-        },
-        {
-          source_id: "sg_food_creator_1",
-          platform: "tiktok",
-          handle: "@sgfoodcreator1",
-          display_name: "SG Food Creator 1",
-          url: "https://tiktok.com/@sgfoodcreator1"
-        }
-      ],
-      beauty_skincare: [
-        {
-          source_id: "sg_beauty_reviewer_1",
-          platform: "instagram",
-          handle: "@sgbeautyreviewer1",
-          display_name: "SG Beauty Reviewer 1",
-          url: "https://instagram.com/sgbeautyreviewer1"
-        },
-        {
-          source_id: "sg_beauty_reviewer_2",
-          platform: "tiktok",
-          handle: "@sgbeautyreviewer2",
-          display_name: "SG Beauty Reviewer 2",
-          url: "https://tiktok.com/@sgbeautyreviewer2"
-        }
-      ]
-    }
-  };
-
-  const fallback = [
-    {
-      source_id: `${safeId(c)}_${safeId(k)}_reviewer_1`,
-      platform: "instagram",
-      handle: `@${safeId(c)}_${safeId(k)}_reviewer_1`,
-      display_name: `${c} ${k} Reviewer 1`,
-      url: "https://example.com/reviewer1"
-    },
-    {
-      source_id: `${safeId(c)}_${safeId(k)}_reviewer_2`,
-      platform: "tiktok",
-      handle: `@${safeId(c)}_${safeId(k)}_reviewer_2`,
-      display_name: `${c} ${k} Reviewer 2`,
-      url: "https://example.com/reviewer2"
-    }
-  ];
-
-  return presets?.[c]?.[k] || fallback;
-}
-
 function getMockMentions(country, category, source) {
   const c = String(country || "TH").toUpperCase();
   const k = String(category || "beauty_skincare").toLowerCase();
@@ -164,38 +62,29 @@ function getMockMentions(country, category, source) {
     }
   };
 
-  const pool = catalog?.[c]?.[k] || [
-    { brand: "Local Brand", product: "Local Product A", hashtag: "#localfind" },
-    { brand: "Local Brand", product: "Local Product B", hashtag: "#revieweditem" }
-  ];
+  const pool =
+    catalog?.[c]?.[k] || [
+      { brand: "Local Brand", product: "Local Product A", hashtag: "#localfind" },
+      { brand: "Local Brand", product: "Local Product B", hashtag: "#revieweditem" }
+    ];
 
   const offset = source.source_id.length % pool.length;
   return [pool[offset], pool[(offset + 1) % pool.length]];
 }
 
-async function upsertSocialSource(source, country, category) {
+async function getHealthySources(country, category) {
   const db = getDb();
-  const ref = db.collection("social_sources").doc(source.source_id);
-  const snap = await ref.get();
-  const existing = snap.exists ? snap.data() : {};
 
-  const payload = {
-    source_id: source.source_id,
-    platform: source.platform || "unknown",
-    handle: source.handle || "",
-    display_name: source.display_name || source.source_id,
-    url: source.url || "",
-    country: String(country || "").toUpperCase(),
-    category: String(category || "").toLowerCase(),
-    health_status: "healthy",
-    status: "active",
-    last_checked: nowIso(),
-    updated_at_iso: nowIso(),
-    created_at_iso: existing.created_at_iso || nowIso()
-  };
+  const snap = await db
+    .collection("social_sources")
+    .where("country", "==", String(country || "").toUpperCase())
+    .where("category", "==", String(category || "").toLowerCase())
+    .where("status", "==", "active")
+    .get();
 
-  await ref.set(payload, { merge: true });
-  return payload;
+  return snap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((x) => x.health_status === "healthy" && !x.auto_disabled);
 }
 
 async function savePost(runId, source, country, category, mention) {
@@ -231,31 +120,25 @@ async function savePost(runId, source, country, category, mention) {
   return payload;
 }
 
-async function countRecentPostsBySource(sourceId, country, category) {
-  const db = getDb();
-
-  const snap = await db
-    .collection("social_posts")
-    .where("source_id", "==", sourceId)
-    .where("country", "==", String(country || "").toUpperCase())
-    .where("category", "==", String(category || "").toLowerCase())
-    .get();
-
-  return snap.size;
-}
-
 async function refreshSourcePostCounts(country, category, sourceIds) {
   const db = getDb();
   const batch = db.batch();
 
   for (const sourceId of sourceIds) {
-    const count = await countRecentPostsBySource(sourceId, country, category);
+    const snap = await db
+      .collection("social_posts")
+      .where("source_id", "==", sourceId)
+      .where("country", "==", String(country || "").toUpperCase())
+      .where("category", "==", String(category || "").toLowerCase())
+      .get();
+
     const ref = db.collection("social_sources").doc(sourceId);
     batch.set(
       ref,
       {
-        post_count: count,
-        updated_at_iso: nowIso()
+        post_count: snap.size,
+        updated_at_iso: nowIso(),
+        last_success_at: nowIso()
       },
       { merge: true }
     );
@@ -280,34 +163,22 @@ async function runSocialScan({ country, category }) {
     status: "RUNNING",
     started_at_iso: nowIso(),
     created_at_iso: nowIso(),
-    sources_seeded: 0,
+    sources_scanned: 0,
     posts_saved: 0
   });
 
   try {
-    const seedSources = getSeedSources(normalizedCountry, normalizedCategory);
+    const sources = await getHealthySources(normalizedCountry, normalizedCategory);
 
-    let sourcesSeeded = 0;
     let postsSaved = 0;
     const sourceIds = [];
 
-    for (const source of seedSources) {
-      const savedSource = await upsertSocialSource(
-        source,
-        normalizedCountry,
-        normalizedCategory
-      );
-      sourcesSeeded += 1;
-      sourceIds.push(savedSource.source_id);
-
-      const mentions = getMockMentions(
-        normalizedCountry,
-        normalizedCategory,
-        savedSource
-      );
+    for (const source of sources) {
+      sourceIds.push(source.source_id);
+      const mentions = getMockMentions(normalizedCountry, normalizedCategory, source);
 
       for (const mention of mentions) {
-        await savePost(runId, savedSource, normalizedCountry, normalizedCategory, mention);
+        await savePost(runId, source, normalizedCountry, normalizedCategory, mention);
         postsSaved += 1;
       }
     }
@@ -318,9 +189,8 @@ async function runSocialScan({ country, category }) {
       {
         status: "COMPLETED",
         completed_at_iso: nowIso(),
-        sources_seeded: sourcesSeeded,
-        posts_saved: postsSaved,
-        healthy_sources: sourcesSeeded
+        sources_scanned: sources.length,
+        posts_saved: postsSaved
       },
       { merge: true }
     );
@@ -330,8 +200,7 @@ async function runSocialScan({ country, category }) {
       run_id: runId,
       country: normalizedCountry,
       category: normalizedCategory,
-      sources_seeded: sourcesSeeded,
-      healthy_sources: sourcesSeeded,
+      sources_scanned: sources.length,
       posts_saved: postsSaved
     };
   } catch (error) {
