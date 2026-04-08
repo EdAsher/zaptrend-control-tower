@@ -11,6 +11,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function safeId(value) {
   return String(value || "")
     .trim()
@@ -35,27 +39,30 @@ function normalizeItemName(brand, product) {
     .replace(/\s+/g, " ");
 }
 
-function computeRecencyBoost(isoStrings = []) {
-  const now = Date.now();
-  let boost = 0;
+function getStatusBand(score, firstSeenAtIso, mentionCount7d) {
+  const firstSeenTs = firstSeenAtIso ? new Date(firstSeenAtIso).getTime() : 0;
+  const ageDays = firstSeenTs ? (Date.now() - firstSeenTs) / (1000 * 60 * 60 * 24) : 999;
 
-  for (const iso of isoStrings) {
-    const ts = new Date(iso).getTime();
-    if (!Number.isFinite(ts)) continue;
-
-    const diffHours = (now - ts) / (1000 * 60 * 60);
-
-    if (diffHours <= 24) boost += 6;
-    else if (diffHours <= 72) boost += 4;
-    else if (diffHours <= 168) boost += 2;
-    else boost += 1;
-  }
-
-  return boost;
+  if (score >= 120 && mentionCount7d >= 2) return "trending";
+  if (score >= 70 && ageDays <= 7) return "new_rising";
+  if (score >= 35) return "holding";
+  return "archive_ready";
 }
 
-function scoreItem({ mentionCount, uniqueSourceCount, recencyBoost }) {
-  return mentionCount * 5 + uniqueSourceCount * 10 + recencyBoost;
+function computeDailySignal({
+  todayMentions,
+  todayUniqueSources,
+  localBonus,
+  exclusivityBonus,
+  genericPenalty
+}) {
+  return (
+    Number(todayMentions || 0) * 20 +
+    Number(todayUniqueSources || 0) * 30 +
+    Number(localBonus || 0) +
+    Number(exclusivityBonus || 0) -
+    Number(genericPenalty || 0)
+  );
 }
 
 async function readRecentPosts(country, category) {
@@ -74,6 +81,7 @@ async function readRecentPosts(country, category) {
 }
 
 function aggregatePosts(posts) {
+  const today = todayKey();
   const map = new Map();
 
   for (const post of posts) {
@@ -91,36 +99,53 @@ function aggregatePosts(posts) {
         product: post.product || "",
         country: post.country || "",
         category: post.category || "",
-        mention_count: 0,
-        source_ids: new Set(),
-        captured_at_list: [],
+        mention_count_7d: 0,
+        source_ids_7d: new Set(),
+        today_mentions: 0,
+        today_source_ids: new Set(),
+        local_bonus_total: 0,
+        exclusivity_bonus_total: 0,
+        generic_penalty_total: 0,
         last_seen_at_iso: post.captured_at_iso || post.updated_at_iso || nowIso()
       });
     }
 
     const row = map.get(key);
-    row.mention_count += 1;
-    row.source_ids.add(post.source_id);
-    row.captured_at_list.push(post.captured_at_iso || post.updated_at_iso || nowIso());
+    row.mention_count_7d += 1;
+    row.source_ids_7d.add(post.source_id);
+
+    if (post.captured_day === today) {
+      row.today_mentions += 1;
+      row.today_source_ids.add(post.source_id);
+      row.local_bonus_total += Number(post.local_bonus || 0);
+      row.exclusivity_bonus_total += Number(post.exclusivity_bonus || 0);
+      row.generic_penalty_total += Number(post.generic_penalty || 0);
+    }
 
     const currentLast = new Date(row.last_seen_at_iso).getTime();
-    const candidateLast = new Date(
-      post.captured_at_iso || post.updated_at_iso || nowIso()
-    ).getTime();
-
+    const candidateLast = new Date(post.captured_at_iso || post.updated_at_iso || nowIso()).getTime();
     if (candidateLast > currentLast) {
       row.last_seen_at_iso = post.captured_at_iso || post.updated_at_iso || nowIso();
     }
   }
 
   return Array.from(map.values()).map((row) => {
-    const unique_source_count = row.source_ids.size;
-    const recency_boost = computeRecencyBoost(row.captured_at_list);
+    const unique_sources_7d = row.source_ids_7d.size;
+    const today_unique_sources = row.today_source_ids.size;
 
-    const score = scoreItem({
-      mentionCount: row.mention_count,
-      uniqueSourceCount: unique_source_count,
-      recencyBoost: recency_boost
+    const avgLocalBonus =
+      row.today_mentions > 0 ? row.local_bonus_total / row.today_mentions : 0;
+    const avgExclusivityBonus =
+      row.today_mentions > 0 ? row.exclusivity_bonus_total / row.today_mentions : 0;
+    const avgGenericPenalty =
+      row.today_mentions > 0 ? row.generic_penalty_total / row.today_mentions : 0;
+
+    const daily_signal = computeDailySignal({
+      todayMentions: row.today_mentions,
+      todayUniqueSources: today_unique_sources,
+      localBonus: avgLocalBonus,
+      exclusivityBonus: avgExclusivityBonus,
+      genericPenalty: avgGenericPenalty
     });
 
     return {
@@ -129,10 +154,14 @@ function aggregatePosts(posts) {
       product: row.product,
       country: row.country,
       category: row.category,
-      mention_count: row.mention_count,
-      unique_source_count,
-      recency_boost,
-      score,
+      mention_count_7d: row.mention_count_7d,
+      unique_sources_7d,
+      today_mentions: row.today_mentions,
+      today_unique_sources,
+      daily_signal,
+      local_bonus: avgLocalBonus,
+      exclusivity_bonus: avgExclusivityBonus,
+      generic_penalty: avgGenericPenalty,
       last_seen_at_iso: row.last_seen_at_iso
     };
   });
@@ -150,6 +179,15 @@ async function saveTrendItems(runId, items) {
     )}`;
 
     const ref = db.collection("trend_items").doc(trendId);
+    const existingSnap = await ref.get();
+    const existing = existingSnap.exists ? existingSnap.data() : {};
+
+    const previousScore = Number(existing?.score || 0);
+    const retainedScore = previousScore * 0.92;
+    const newScore = Number((retainedScore + item.daily_signal).toFixed(2));
+
+    const firstSeenAtIso = existing?.first_seen_at_iso || nowIso();
+    const statusBand = getStatusBand(newScore, firstSeenAtIso, item.mention_count_7d);
 
     batch.set(
       ref,
@@ -163,13 +201,26 @@ async function saveTrendItems(runId, items) {
         product: item.product,
         country: item.country,
         category: item.category,
-        mention_count: item.mention_count,
-        unique_source_count: item.unique_source_count,
-        recency_boost: item.recency_boost,
-        score: item.score,
+
+        score: newScore,
+        retained_score: Number(retainedScore.toFixed(2)),
+        daily_signal: item.daily_signal,
+
+        today_mentions: item.today_mentions,
+        today_unique_sources: item.today_unique_sources,
+        mention_count_7d: item.mention_count_7d,
+        unique_sources_7d: item.unique_sources_7d,
+
+        local_bonus: item.local_bonus,
+        exclusivity_bonus: item.exclusivity_bonus,
+        generic_penalty: item.generic_penalty,
+
+        status_band: statusBand,
+        first_seen_at_iso: firstSeenAtIso,
         last_seen_at_iso: item.last_seen_at_iso,
+
         updated_at_iso: nowIso(),
-        created_at: Timestamp.now()
+        created_at: existing?.created_at || Timestamp.now()
       },
       { merge: true }
     );
@@ -204,13 +255,23 @@ async function runTrendConsensus({ country, category, limit = 20 }) {
     const aggregated = aggregatePosts(posts)
       .sort(
         (a, b) =>
-          b.score - a.score ||
-          b.unique_source_count - a.unique_source_count ||
-          b.mention_count - a.mention_count
+          b.daily_signal - a.daily_signal ||
+          b.today_unique_sources - a.today_unique_sources ||
+          b.today_mentions - a.today_mentions
       )
       .slice(0, Number(limit || 20));
 
     await saveTrendItems(runId, aggregated);
+
+    const latestSnap = await db
+      .collection("trend_items")
+      .where("country", "==", normalizedCountry)
+      .where("category", "==", normalizedCategory)
+      .orderBy("score", "desc")
+      .limit(Number(limit || 20))
+      .get();
+
+    const results = latestSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
     await runRef.set(
       {
@@ -229,7 +290,7 @@ async function runTrendConsensus({ country, category, limit = 20 }) {
       category: normalizedCategory,
       source_posts: posts.length,
       generated_count: aggregated.length,
-      results: aggregated
+      results
     };
   } catch (error) {
     await runRef.set(

@@ -11,6 +11,12 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function addDaysIso(days) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString();
+}
+
 function safeId(value) {
   return String(value || "")
     .trim()
@@ -34,6 +40,7 @@ function guessPlatform(url = "") {
   if (u.includes("instagram.com")) return "instagram";
   if (u.includes("youtube.com") || u.includes("youtu.be")) return "youtube";
   if (u.includes("facebook.com")) return "facebook";
+  if (u.includes("lemon8")) return "lemon8";
   return "web";
 }
 
@@ -156,6 +163,7 @@ async function checkSourceHealth(source) {
     };
   }
 
+  // placeholder health simulation
   if (url.includes("thbeautyreviewer2")) {
     return {
       ok: false,
@@ -173,12 +181,20 @@ async function checkSourceHealth(source) {
   };
 }
 
+function computeNextHealthCheck(existing, healthOk) {
+  if (healthOk) return addDaysIso(7);
+
+  const failCount = Number(existing?.health_fail_count || 0) + 1;
+  if (failCount >= 2) return addDaysIso(30);
+  return addDaysIso(14);
+}
+
 async function upsertSource({
   source,
   country,
   category,
   health,
-  discoveredBy = "lite_v2_discovery"
+  discoveredBy = "lite_v2_1_discovery"
 }) {
   const db = getDb();
   const ref = db.collection("social_sources").doc(source.source_id);
@@ -205,6 +221,7 @@ async function upsertSource({
     health_http_status: health.health_http_status ?? null,
     health_reason: health.reason || "",
     health_last_checked: nowIso(),
+    next_health_check_at: computeNextHealthCheck(existing, health.ok),
     health_fail_count: failCount,
     auto_disabled: autoDisabled,
     auto_disabled_reason: autoDisabled ? health.reason || "health_check_failed" : "",
@@ -220,6 +237,47 @@ async function upsertSource({
 
   await ref.set(payload, { merge: true });
   return payload;
+}
+
+async function runScheduledHealthRecheck(country, category) {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const snap = await db
+    .collection("social_sources")
+    .where("country", "==", String(country || "").toUpperCase())
+    .where("category", "==", String(category || "").toLowerCase())
+    .get();
+
+  let healthyCount = 0;
+  let unhealthyCount = 0;
+  let checkedCount = 0;
+
+  for (const doc of snap.docs) {
+    const source = { id: doc.id, ...doc.data() };
+    const due = !source.next_health_check_at || String(source.next_health_check_at) <= now;
+
+    if (!due) continue;
+
+    checkedCount += 1;
+    const health = await checkSourceHealth(source);
+    await upsertSource({
+      source,
+      country,
+      category,
+      health,
+      discoveredBy: source.discovered_by || "lite_v2_1_discovery"
+    });
+
+    if (health.ok) healthyCount += 1;
+    else unhealthyCount += 1;
+  }
+
+  return {
+    checked_count: checkedCount,
+    rehealthy_count: healthyCount,
+    reunhealthy_count: unhealthyCount
+  };
 }
 
 async function runSourceDiscovery({ country, category }) {
@@ -240,7 +298,8 @@ async function runSourceDiscovery({ country, category }) {
     discovered_count: 0,
     healthy_count: 0,
     unhealthy_count: 0,
-    skipped_count: 0
+    skipped_count: 0,
+    checked_count: 0
   });
 
   try {
@@ -270,6 +329,8 @@ async function runSourceDiscovery({ country, category }) {
       else unhealthyCount += 1;
     }
 
+    const recheck = await runScheduledHealthRecheck(normalizedCountry, normalizedCategory);
+
     await runRef.set(
       {
         status: "COMPLETED",
@@ -277,7 +338,10 @@ async function runSourceDiscovery({ country, category }) {
         discovered_count: discoveredCount,
         healthy_count: healthyCount,
         unhealthy_count: unhealthyCount,
-        skipped_count: skippedCount
+        skipped_count: skippedCount,
+        checked_count: recheck.checked_count,
+        rehealthy_count: recheck.rehealthy_count,
+        reunhealthy_count: recheck.reunhealthy_count
       },
       { merge: true }
     );
@@ -290,7 +354,8 @@ async function runSourceDiscovery({ country, category }) {
       discovered_count: discoveredCount,
       healthy_count: healthyCount,
       unhealthy_count: unhealthyCount,
-      skipped_count: skippedCount
+      skipped_count: skippedCount,
+      checked_count: recheck.checked_count
     };
   } catch (error) {
     await runRef.set(
