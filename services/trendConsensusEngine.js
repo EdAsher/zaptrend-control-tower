@@ -3,7 +3,9 @@
 const crypto = require("crypto");
 const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 
-const db = getFirestore();
+function getDb() {
+  return getFirestore();
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -57,6 +59,8 @@ function scoreItem({ mentionCount, uniqueSourceCount, recencyBoost }) {
 }
 
 async function readRecentPosts(country, category) {
+  const db = getDb();
+
   const normalizedCountry = String(country || "TH").toUpperCase();
   const normalizedCategory = String(category || "beauty_skincare").toLowerCase();
 
@@ -73,7 +77,11 @@ function aggregatePosts(posts) {
   const map = new Map();
 
   for (const post of posts) {
-    const key = normalizeItemName(post.brand, post.product) || post.normalized_name || post.item_name;
+    const key =
+      normalizeItemName(post.brand, post.product) ||
+      post.normalized_name ||
+      post.item_name;
+
     if (!key) continue;
 
     if (!map.has(key)) {
@@ -96,7 +104,10 @@ function aggregatePosts(posts) {
     row.captured_at_list.push(post.captured_at_iso || post.updated_at_iso || nowIso());
 
     const currentLast = new Date(row.last_seen_at_iso).getTime();
-    const candidateLast = new Date(post.captured_at_iso || post.updated_at_iso || nowIso()).getTime();
+    const candidateLast = new Date(
+      post.captured_at_iso || post.updated_at_iso || nowIso()
+    ).getTime();
+
     if (candidateLast > currentLast) {
       row.last_seen_at_iso = post.captured_at_iso || post.updated_at_iso || nowIso();
     }
@@ -108,7 +119,7 @@ function aggregatePosts(posts) {
     const score = scoreItem({
       mentionCount: row.mention_count,
       uniqueSourceCount: unique_source_count,
-      recencyBoost: recency_boost
+      recencyBoost
     });
 
     return {
@@ -127,12 +138,15 @@ function aggregatePosts(posts) {
 }
 
 async function saveTrendItems(runId, items) {
+  const db = getDb();
   const batch = db.batch();
 
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
     const rank = i + 1;
-    const trendId = `trend_${hashId(`${item.country}|${item.category}|${item.normalized_name}`)}`;
+    const trendId = `trend_${hashId(
+      `${item.country}|${item.category}|${item.normalized_name}`
+    )}`;
 
     const ref = db.collection("trend_items").doc(trendId);
 
@@ -164,6 +178,8 @@ async function saveTrendItems(runId, items) {
 }
 
 async function runTrendConsensus({ country, category, limit = 20 }) {
+  const db = getDb();
+
   const normalizedCountry = String(country || "TH").toUpperCase();
   const normalizedCategory = String(category || "beauty_skincare").toLowerCase();
   const runId = buildRunId(normalizedCountry, normalizedCategory);
@@ -184,7 +200,12 @@ async function runTrendConsensus({ country, category, limit = 20 }) {
   try {
     const posts = await readRecentPosts(normalizedCountry, normalizedCategory);
     const aggregated = aggregatePosts(posts)
-      .sort((a, b) => b.score - a.score || b.unique_source_count - a.unique_source_count || b.mention_count - a.mention_count)
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          b.unique_source_count - a.unique_source_count ||
+          b.mention_count - a.mention_count
+      )
       .slice(0, Number(limit || 20));
 
     await saveTrendItems(runId, aggregated);

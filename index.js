@@ -3,14 +3,17 @@
 const express = require("express");
 const cors = require("cors");
 const admin = require("firebase-admin");
-const { getFirestore } = require("firebase-admin/firestore");
-
-const { runSocialScan } = require("./services/socialScanEngine");
-const { runTrendConsensus } = require("./services/trendConsensusEngine");
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
+
+const { getFirestore } = require("firebase-admin/firestore");
+
+// IMPORTANT:
+// Require service files only AFTER Firebase Admin is initialized.
+const { runSocialScan } = require("./services/socialScanEngine");
+const { runTrendConsensus } = require("./services/trendConsensusEngine");
 
 const db = getFirestore();
 const app = express();
@@ -144,19 +147,20 @@ app.get("/admin/lite/trends/latest", async (req, res) => {
 });
 
 /**
- * Optional: one-shot daily runner for scheduler
  * POST /admin/lite/daily/run
  * body: { countries?: [], categories?: [] }
  */
 app.post("/admin/lite/daily/run", async (req, res) => {
   try {
-    const countries = Array.isArray(req.body?.countries) && req.body.countries.length
-      ? req.body.countries.map((x) => safeUpper(x, "TH"))
-      : ["TH"];
+    const countries =
+      Array.isArray(req.body?.countries) && req.body.countries.length
+        ? req.body.countries.map((x) => safeUpper(x, "TH"))
+        : ["TH"];
 
-    const categories = Array.isArray(req.body?.categories) && req.body.categories.length
-      ? req.body.categories.map((x) => safeLower(x, "beauty_skincare"))
-      : ["beauty_skincare"];
+    const categories =
+      Array.isArray(req.body?.categories) && req.body.categories.length
+        ? req.body.categories.map((x) => safeLower(x, "beauty_skincare"))
+        : ["beauty_skincare"];
 
     const results = [];
 

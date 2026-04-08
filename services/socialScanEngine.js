@@ -1,9 +1,11 @@
 "use strict";
 
 const crypto = require("crypto");
-const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
+const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 
-const db = getFirestore();
+function getDb() {
+  return getFirestore();
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -26,10 +28,6 @@ function buildRunId(country, category) {
   return `social_${safeId(country)}_${safeId(category)}_${Date.now()}`;
 }
 
-/**
- * Seed starter local reviewer sources.
- * Replace / expand this list over time with your real curated local reviewers.
- */
 function getSeedSources(country, category) {
   const c = String(country || "TH").toUpperCase();
   const k = String(category || "beauty_skincare").toLowerCase();
@@ -132,10 +130,6 @@ function getSeedSources(country, category) {
   return presets?.[c]?.[k] || fallback;
 }
 
-/**
- * Demo/starter social mentions generator.
- * Replace later with your real scraper/parser/import pipeline.
- */
 function getMockMentions(country, category, source) {
   const c = String(country || "TH").toUpperCase();
   const k = String(category || "beauty_skincare").toLowerCase();
@@ -170,18 +164,17 @@ function getMockMentions(country, category, source) {
     }
   };
 
-  const pool =
-    catalog?.[c]?.[k] || [
-      { brand: "Local Brand", product: "Local Product A", hashtag: "#localfind" },
-      { brand: "Local Brand", product: "Local Product B", hashtag: "#revieweditem" }
-    ];
+  const pool = catalog?.[c]?.[k] || [
+    { brand: "Local Brand", product: "Local Product A", hashtag: "#localfind" },
+    { brand: "Local Brand", product: "Local Product B", hashtag: "#revieweditem" }
+  ];
 
-  // small deterministic spread per source
   const offset = source.source_id.length % pool.length;
   return [pool[offset], pool[(offset + 1) % pool.length]];
 }
 
 async function upsertSocialSource(source, country, category) {
+  const db = getDb();
   const ref = db.collection("social_sources").doc(source.source_id);
   const snap = await ref.get();
   const existing = snap.exists ? snap.data() : {};
@@ -206,7 +199,11 @@ async function upsertSocialSource(source, country, category) {
 }
 
 async function savePost(runId, source, country, category, mention) {
-  const normalized_name = `${String(mention.brand || "").trim()} ${String(mention.product || "").trim()}`
+  const db = getDb();
+
+  const normalized_name = `${String(mention.brand || "").trim()} ${String(
+    mention.product || ""
+  ).trim()}`
     .trim()
     .toLowerCase();
 
@@ -235,6 +232,8 @@ async function savePost(runId, source, country, category, mention) {
 }
 
 async function countRecentPostsBySource(sourceId, country, category) {
+  const db = getDb();
+
   const snap = await db
     .collection("social_posts")
     .where("source_id", "==", sourceId)
@@ -246,6 +245,7 @@ async function countRecentPostsBySource(sourceId, country, category) {
 }
 
 async function refreshSourcePostCounts(country, category, sourceIds) {
+  const db = getDb();
   const batch = db.batch();
 
   for (const sourceId of sourceIds) {
@@ -265,6 +265,8 @@ async function refreshSourcePostCounts(country, category, sourceIds) {
 }
 
 async function runSocialScan({ country, category }) {
+  const db = getDb();
+
   const normalizedCountry = String(country || "TH").toUpperCase();
   const normalizedCategory = String(category || "beauty_skincare").toLowerCase();
   const runId = buildRunId(normalizedCountry, normalizedCategory);
@@ -290,11 +292,20 @@ async function runSocialScan({ country, category }) {
     const sourceIds = [];
 
     for (const source of seedSources) {
-      const savedSource = await upsertSocialSource(source, normalizedCountry, normalizedCategory);
+      const savedSource = await upsertSocialSource(
+        source,
+        normalizedCountry,
+        normalizedCategory
+      );
       sourcesSeeded += 1;
       sourceIds.push(savedSource.source_id);
 
-      const mentions = getMockMentions(normalizedCountry, normalizedCategory, savedSource);
+      const mentions = getMockMentions(
+        normalizedCountry,
+        normalizedCategory,
+        savedSource
+      );
+
       for (const mention of mentions) {
         await savePost(runId, savedSource, normalizedCountry, normalizedCategory, mention);
         postsSaved += 1;
