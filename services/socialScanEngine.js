@@ -73,3 +73,7 @@ async function fetchPublicSourceContent(source) {
     };
   }
 }
+
+module.exports = {
+  runSocialScan
+};
