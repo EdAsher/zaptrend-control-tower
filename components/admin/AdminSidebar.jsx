@@ -4,9 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const nav = [
-  { href: "/admin", label: "Overview" },
-  { href: "/admin/sources", label: "Sources" },
-  { href: "/admin/trends", label: "Trends" }
+  { href: "/admin", label: "Overview", icon: "◈" },
+  { href: "/admin/sources", label: "Sources", icon: "◎" },
+  { href: "/admin/trends", label: "Trends", icon: "✦" }
 ];
 
 export default function AdminSidebar() {
@@ -23,10 +23,10 @@ export default function AdminSidebar() {
               ZapTrend
             </div>
             <div className="mt-3 text-[28px] font-semibold tracking-tight text-white">
-              Control Tower
+              Lite v2.1
             </div>
             <div className="mt-2 max-w-[220px] text-sm leading-6 text-zinc-400">
-              Futuristic intelligence and automation console.
+              Autonomous local source discovery, health checks, and momentum-based trend ranking.
             </div>
           </div>
 
@@ -85,10 +85,10 @@ export default function AdminSidebar() {
               </div>
 
               <div className="mt-3 text-sm font-medium text-emerald-300">
-                Engine online
+                Lite engine online
               </div>
               <div className="mt-1 text-xs leading-5 text-zinc-500">
-                Sources, trends, generation, automation.
+                Discovery, health checks, sources, and trends active.
               </div>
             </div>
           </div>
