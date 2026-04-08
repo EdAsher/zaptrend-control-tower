@@ -30,7 +30,7 @@ function safeLower(value, fallback) {
 app.get("/health", async (req, res) => {
   res.json({
     ok: true,
-    service: "zaptrend-lite-v2",
+    service: "zaptrend-lite-v2.3",
     ts: new Date().toISOString()
   });
 });
@@ -196,5 +196,5 @@ app.post("/admin/lite/daily/run", async (req, res) => {
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-  console.log(`ZapTrend Lite v2 API listening on ${PORT}`);
+  console.log(`ZapTrend Lite v2.3 API listening on ${PORT}`);
 });
