@@ -116,10 +116,11 @@ function aggregatePosts(posts) {
   return Array.from(map.values()).map((row) => {
     const unique_source_count = row.source_ids.size;
     const recency_boost = computeRecencyBoost(row.captured_at_list);
+
     const score = scoreItem({
       mentionCount: row.mention_count,
       uniqueSourceCount: unique_source_count,
-      recencyBoost
+      recencyBoost: recency_boost
     });
 
     return {
@@ -199,6 +200,7 @@ async function runTrendConsensus({ country, category, limit = 20 }) {
 
   try {
     const posts = await readRecentPosts(normalizedCountry, normalizedCategory);
+
     const aggregated = aggregatePosts(posts)
       .sort(
         (a, b) =>
