@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const { getFirestore, Timestamp } = require("firebase-admin/firestore");
+const { getDiscoveryConfig } = require("../config/discoveryMatrix");
 
 function getDb() {
   return getFirestore();
@@ -55,100 +56,12 @@ function isRetailBrandCandidate(source) {
     "guardian",
     "boots",
     "brand",
-    "mall"
+    "mall",
+    "amazon",
+    "shopee",
+    "lazada"
   ];
   return blocked.some((x) => text.includes(x));
-}
-
-function getDiscoverySeeds(country, category) {
-  const c = String(country || "TH").toUpperCase();
-  const k = String(category || "beauty_skincare").toLowerCase();
-
-  const presets = {
-    TH: {
-      beauty_skincare: [
-        {
-          source_id: "th_beauty_reviewer_1",
-          display_name: "TH Beauty Reviewer 1",
-          handle: "@thbeautyreviewer1",
-          url: "https://instagram.com/thbeautyreviewer1"
-        },
-        {
-          source_id: "th_beauty_reviewer_2",
-          display_name: "TH Beauty Reviewer 2",
-          handle: "@thbeautyreviewer2",
-          url: "https://tiktok.com/@thbeautyreviewer2"
-        },
-        {
-          source_id: "th_beauty_blog_1",
-          display_name: "TH Beauty Blog 1",
-          handle: "thbeautyblog1",
-          url: "https://example.com/thbeautyblog1"
-        }
-      ],
-      snacks_drinks: [
-        {
-          source_id: "th_snack_reviewer_1",
-          display_name: "TH Snack Reviewer 1",
-          handle: "@thsnackreviewer1",
-          url: "https://instagram.com/thsnackreviewer1"
-        },
-        {
-          source_id: "th_snack_reviewer_2",
-          display_name: "TH Snack Reviewer 2",
-          handle: "@thsnackreviewer2",
-          url: "https://tiktok.com/@thsnackreviewer2"
-        }
-      ]
-    },
-    SG: {
-      snacks_drinks: [
-        {
-          source_id: "sg_snack_reviewer_1",
-          display_name: "SG Snack Reviewer 1",
-          handle: "@sgsnackreviewer1",
-          url: "https://instagram.com/sgsnackreviewer1"
-        },
-        {
-          source_id: "sg_food_creator_1",
-          display_name: "SG Food Creator 1",
-          handle: "@sgfoodcreator1",
-          url: "https://tiktok.com/@sgfoodcreator1"
-        }
-      ],
-      beauty_skincare: [
-        {
-          source_id: "sg_beauty_reviewer_1",
-          display_name: "SG Beauty Reviewer 1",
-          handle: "@sgbeautyreviewer1",
-          url: "https://instagram.com/sgbeautyreviewer1"
-        },
-        {
-          source_id: "sg_beauty_reviewer_2",
-          display_name: "SG Beauty Reviewer 2",
-          handle: "@sgbeautyreviewer2",
-          url: "https://tiktok.com/@sgbeautyreviewer2"
-        }
-      ]
-    }
-  };
-
-  return (
-    presets?.[c]?.[k] || [
-      {
-        source_id: `${safeId(c)}_${safeId(k)}_reviewer_1`,
-        display_name: `${c} ${k} Reviewer 1`,
-        handle: `@${safeId(c)}_${safeId(k)}_reviewer_1`,
-        url: "https://example.com/reviewer1"
-      },
-      {
-        source_id: `${safeId(c)}_${safeId(k)}_reviewer_2`,
-        display_name: `${c} ${k} Reviewer 2`,
-        handle: `@${safeId(c)}_${safeId(k)}_reviewer_2`,
-        url: "https://example.com/reviewer2"
-      }
-    ]
-  );
 }
 
 async function checkSourceHealth(source) {
@@ -163,8 +76,8 @@ async function checkSourceHealth(source) {
     };
   }
 
-  // placeholder health simulation
-  if (url.includes("thbeautyreviewer2")) {
+  // existing lightweight simulated health rule
+  if (url.includes("th_beauty_skincare_tiktok_2") || url.includes("thbeautyreviewer2")) {
     return {
       ok: false,
       health_status: "unavailable",
@@ -194,7 +107,7 @@ async function upsertSource({
   country,
   category,
   health,
-  discoveredBy = "lite_v2_1_discovery"
+  discoveredBy = "lite_v2_4_discovery"
 }) {
   const db = getDb();
   const ref = db.collection("social_sources").doc(source.source_id);
@@ -230,6 +143,7 @@ async function upsertSource({
     last_success_at: health.ok ? nowIso() : existing.last_success_at || null,
     last_fail_at: health.ok ? existing.last_fail_at || null : nowIso(),
 
+    discovery_queries: source.discovery_queries || [],
     updated_at_iso: nowIso(),
     created_at_iso: existing.created_at_iso || nowIso(),
     created_at: existing.created_at || Timestamp.now()
@@ -266,7 +180,7 @@ async function runScheduledHealthRecheck(country, category) {
       country,
       category,
       health,
-      discoveredBy: source.discovered_by || "lite_v2_1_discovery"
+      discoveredBy: source.discovered_by || "lite_v2_4_discovery"
     });
 
     if (health.ok) healthyCount += 1;
@@ -303,7 +217,11 @@ async function runSourceDiscovery({ country, category }) {
   });
 
   try {
-    const seeds = getDiscoverySeeds(normalizedCountry, normalizedCategory);
+    const config = getDiscoveryConfig(normalizedCountry, normalizedCategory);
+    const seeds = (config.seed_sources || []).map((seed) => ({
+      ...seed,
+      discovery_queries: config.discovery_queries || []
+    }));
 
     let discoveredCount = 0;
     let healthyCount = 0;
