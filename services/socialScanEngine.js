@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const { getFirestore, Timestamp } = require("firebase-admin/firestore");
+const { getCategoryDictionary } = require("../config/categoryDictionaries");
 
 function getDb() {
   return getFirestore();
@@ -140,82 +141,12 @@ function getBlockedTerms() {
 }
 
 function getCategoryKeywordRules(category) {
-  const c = String(category || "").toLowerCase();
+  const dict = getCategoryDictionary(category);
 
-  const rules = {
-    beauty_skincare: {
-      brands: [
-        "Srichand",
-        "Mizumi",
-        "Cathy Doll",
-        "Suu Balm",
-        "Allies of Skin",
-        "In2It",
-        "Mistine",
-        "Snailwhite",
-        "Her Hyness",
-        "ศรีจันทร์",
-        "มิสทีน"
-      ],
-      productHints: [
-        "serum",
-        "sunscreen",
-        "powder",
-        "lip tint",
-        "moisturizer",
-        "cream",
-        "cleanser",
-        "toner",
-        "mist",
-        "บาล์ม",
-        "ครีม",
-        "เซรั่ม"
-      ]
-    },
-    snacks_drinks: {
-      brands: [
-        "Bento",
-        "Mama",
-        "Tasto",
-        "Irvins",
-        "TWG",
-        "Ya Kun",
-        "Pocky",
-        "Meiji",
-        "เบนโตะ",
-        "มาม่า"
-      ],
-      productHints: [
-        "chips",
-        "cookies",
-        "tea",
-        "kaya",
-        "noodles",
-        "roll",
-        "snack",
-        "drink",
-        "cracker",
-        "biscuit",
-        "ขนม",
-        "ชา",
-        "บะหมี่"
-      ]
-    },
-    fashion_accessories: {
-      brands: [],
-      productHints: ["bag", "wallet", "shirt", "cap", "รองเท้า", "กระเป๋า"]
-    },
-    souvenirs_local_finds: {
-      brands: [],
-      productHints: ["souvenir", "gift", "local find", "ของฝาก"]
-    },
-    other: {
-      brands: [],
-      productHints: ["must buy", "local find", "rare", "exclusive"]
-    }
+  return {
+    brands: dict.brands || [],
+    productHints: dict.productHints || []
   };
-
-  return rules[c] || rules.other;
 }
 
 function hasCategoryHint(text, category) {
