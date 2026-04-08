@@ -41,11 +41,13 @@ function stripHtml(html) {
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -119,6 +121,50 @@ async function getHealthySources(country, category) {
     });
 }
 
+function extractMetaContent(html, attr, value) {
+  const regex = new RegExp(
+    `<meta[^>]+${attr}=["']${value}["'][^>]+content=["']([^"']+)["'][^>]*>`,
+    "i"
+  );
+  const match = String(html || "").match(regex);
+  return match ? normalizeWhitespace(match[1]) : "";
+}
+
+function extractTitle(html) {
+  const match = String(html || "").match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? normalizeWhitespace(stripHtml(match[1])) : "";
+}
+
+function extractJsonLdText(html) {
+  const matches = String(html || "").match(
+    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+  );
+  if (!matches) return "";
+
+  const combined = matches
+    .map((block) => stripHtml(block))
+    .join(" ");
+
+  return normalizeWhitespace(combined);
+}
+
+function extractInterestingTextBlocks(html) {
+  const clean = String(html || "");
+
+  const h1s = Array.from(clean.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)).map((m) =>
+    normalizeWhitespace(stripHtml(m[1]))
+  );
+  const h2s = Array.from(clean.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)).map((m) =>
+    normalizeWhitespace(stripHtml(m[1]))
+  );
+  const paras = Array.from(clean.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi))
+    .map((m) => normalizeWhitespace(stripHtml(m[1])))
+    .filter((x) => x.length >= 20)
+    .slice(0, 40);
+
+  return [...h1s, ...h2s, ...paras].join(" ");
+}
+
 async function fetchPublicSourceContent(source) {
   const url = String(source.url || "").trim();
   if (!url) {
@@ -141,11 +187,23 @@ async function fetchPublicSourceContent(source) {
     });
 
     const raw = await res.text();
-    const cleaned = stripHtml(raw);
+    const title = extractTitle(raw);
+    const ogTitle = extractMetaContent(raw, "property", "og:title");
+    const ogDesc = extractMetaContent(raw, "property", "og:description");
+    const metaDesc = extractMetaContent(raw, "name", "description");
+    const jsonLd = extractJsonLdText(raw);
+    const interestingBlocks = extractInterestingTextBlocks(raw);
+    const bodyText = stripHtml(raw);
+
+    const mergedText = normalizeWhitespace(
+      [title, ogTitle, ogDesc, metaDesc, jsonLd, interestingBlocks, bodyText]
+        .filter(Boolean)
+        .join(" ")
+    );
 
     return {
       ok: res.ok,
-      source_text: cleaned,
+      source_text: mergedText,
       fetch_status: res.status,
       error: res.ok ? "" : `http_${res.status}`
     };
@@ -162,26 +220,6 @@ async function fetchPublicSourceContent(source) {
 function getCategoryKeywordRules(category) {
   const c = String(category || "").toLowerCase();
 
-  const commonStop = new Set([
-    "review",
-    "reviews",
-    "favorite",
-    "favourite",
-    "today",
-    "viral",
-    "new",
-    "best",
-    "shopping",
-    "haul",
-    "creator",
-    "influencer",
-    "video",
-    "content",
-    "instagram",
-    "tiktok",
-    "youtube"
-  ]);
-
   const rules = {
     beauty_skincare: {
       brands: [
@@ -189,7 +227,13 @@ function getCategoryKeywordRules(category) {
         "Mizumi",
         "Cathy Doll",
         "Suu Balm",
-        "Allies of Skin"
+        "Allies of Skin",
+        "In2It",
+        "Mistine",
+        "Snailwhite",
+        "Her Hyness",
+        "ศรีจันทร์",
+        "มิสทีน"
       ],
       productHints: [
         "serum",
@@ -199,11 +243,26 @@ function getCategoryKeywordRules(category) {
         "moisturizer",
         "cream",
         "cleanser",
-        "toner"
+        "toner",
+        "mist",
+        "บาล์ม",
+        "ครีม",
+        "เซรั่ม"
       ]
     },
     snacks_drinks: {
-      brands: ["Bento", "Mama", "Tasto", "Irvins", "TWG", "Ya Kun"],
+      brands: [
+        "Bento",
+        "Mama",
+        "Tasto",
+        "Irvins",
+        "TWG",
+        "Ya Kun",
+        "Pocky",
+        "Meiji",
+        "เบนโตะ",
+        "มาม่า"
+      ],
       productHints: [
         "chips",
         "cookies",
@@ -212,15 +271,89 @@ function getCategoryKeywordRules(category) {
         "noodles",
         "roll",
         "snack",
-        "drink"
+        "drink",
+        "cracker",
+        "biscuit",
+        "ขนม",
+        "ชา",
+        "บะหมี่"
       ]
+    },
+    fashion_accessories: {
+      brands: [],
+      productHints: ["bag", "wallet", "shirt", "cap", "รองเท้า", "กระเป๋า"]
+    },
+    souvenirs_local_finds: {
+      brands: [],
+      productHints: ["souvenir", "gift", "local find", "ของฝาก"]
+    },
+    other: {
+      brands: [],
+      productHints: ["must buy", "local find", "rare", "exclusive"]
     }
   };
 
+  return rules[c] || rules.other;
+}
+
+function inferExclusivityBonus(text, country) {
+  const t = String(text || "").toLowerCase();
+  const c = String(country || "").toLowerCase();
+
+  const exclusivityWords = [
+    "exclusive",
+    "limited",
+    "only in",
+    "rare",
+    "local find",
+    "must buy",
+    "travel buy",
+    "popular in",
+    "ของหายาก",
+    "เฉพาะ",
+    "ของฝาก"
+  ];
+
+  let bonus = 0;
+  if (exclusivityWords.some((x) => t.includes(x))) bonus += 8;
+  if (t.includes(c)) bonus += 4;
+
+  return bonus;
+}
+
+function inferGenericPenalty(text) {
+  const t = String(text || "").toLowerCase();
+  const genericWords = [
+    "amazon",
+    "global brand",
+    "worldwide",
+    "everywhere",
+    "official store",
+    "buy now",
+    "checkout"
+  ];
+  return genericWords.some((x) => t.includes(x)) ? 10 : 0;
+}
+
+function candidateBrandProductFromSentence(sentence, hint) {
+  const parts = normalizeWhitespace(sentence).split(/\s+/);
+  const clean = parts
+    .map((w) => w.replace(/[^a-zA-Z0-9\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF-]/g, ""))
+    .filter(Boolean);
+
+  const hintIndex = clean.findIndex((x) => x.toLowerCase() === String(hint).toLowerCase());
+
+  if (hintIndex > 0) {
+    const brand = clean[hintIndex - 1];
+    return {
+      brand: brand || "Local Find",
+      product: hint
+    };
+  }
+
   return {
-    brands: rules[c]?.brands || [],
-    productHints: rules[c]?.productHints || [],
-    commonStop
+    brand: clean[0] || "Local Find",
+    product: hint
   };
 }
 
@@ -231,34 +364,29 @@ function extractMentionsFromText({
   source
 }) {
   const normalizedText = normalizeWhitespace(text);
-  const sentences = splitSentences(normalizedText).slice(0, 120);
+  const sentences = splitSentences(normalizedText).slice(0, 200);
   const lang = detectLanguageHeuristic(normalizedText);
-  const { brands, productHints, commonStop } = getCategoryKeywordRules(category);
+  const { brands, productHints } = getCategoryKeywordRules(category);
 
   const mentions = [];
   const seen = new Set();
 
+  // Pass 1: known brands + optional product hints
   for (const sentence of sentences) {
     const lower = sentence.toLowerCase();
 
     for (const brand of brands) {
-      if (!lower.includes(brand.toLowerCase())) continue;
+      if (!lower.includes(String(brand).toLowerCase())) continue;
 
       let matchedHint = "";
       for (const hint of productHints) {
-        if (lower.includes(hint.toLowerCase())) {
+        if (lower.includes(String(hint).toLowerCase())) {
           matchedHint = hint;
           break;
         }
       }
 
-      const product = matchedHint
-        ? sentence
-            .split(/[,|/()-]/)
-            .map((x) => normalizeWhitespace(x))
-            .find((x) => x.toLowerCase().includes(matchedHint.toLowerCase())) || matchedHint
-        : "Unknown Product";
-
+      const product = matchedHint || "featured item";
       const normalizedName = normalizeWhitespace(`${brand} ${product}`).toLowerCase();
       if (seen.has(normalizedName)) continue;
       seen.add(normalizedName);
@@ -278,88 +406,67 @@ function extractMentionsFromText({
     }
   }
 
-  if (mentions.length > 0) return mentions.slice(0, 8);
+  // Pass 2: category hint-driven extraction
+  if (mentions.length < 2) {
+    for (const sentence of sentences) {
+      const lower = sentence.toLowerCase();
 
-  // fallback lightweight extraction if no known brand matched
-  const fallback = extractGenericMentions(sentences, category, source, country, lang);
-  return fallback.slice(0, 6);
-}
+      const matchedHint = productHints.find((hint) =>
+        lower.includes(String(hint).toLowerCase())
+      );
 
-function inferExclusivityBonus(text, country) {
-  const t = String(text || "").toLowerCase();
-  const c = String(country || "").toLowerCase();
+      if (!matchedHint) continue;
 
-  const exclusivityWords = [
-    "exclusive",
-    "limited",
-    "only in",
-    "rare",
-    "local find",
-    "must buy",
-    "travel buy",
-    "popular in"
-  ];
+      const { brand, product } = candidateBrandProductFromSentence(sentence, matchedHint);
+      const normalizedName = normalizeWhitespace(`${brand} ${product}`).toLowerCase();
+      if (seen.has(normalizedName)) continue;
+      seen.add(normalizedName);
 
-  let bonus = 0;
-  if (exclusivityWords.some((x) => t.includes(x))) bonus += 8;
-  if (t.includes(c)) bonus += 4;
-
-  return bonus;
-}
-
-function inferGenericPenalty(text) {
-  const t = String(text || "").toLowerCase();
-  const genericWords = [
-    "amazon",
-    "global brand",
-    "worldwide",
-    "everywhere",
-    "official store"
-  ];
-  return genericWords.some((x) => t.includes(x)) ? 10 : 0;
-}
-
-function extractGenericMentions(sentences, category, source, country, lang) {
-  const hints = getCategoryKeywordRules(category).productHints;
-  const mentions = [];
-  const seen = new Set();
-
-  for (const sentence of sentences) {
-    const lower = sentence.toLowerCase();
-
-    const hint = hints.find((h) => lower.includes(h.toLowerCase()));
-    if (!hint) continue;
-
-    const words = sentence.split(/\s+/).filter(Boolean);
-    const candidates = words.filter((w) => {
-      const cleaned = w.replace(/[^a-zA-Z0-9\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF-]/g, "");
-      if (!cleaned) return false;
-      if (cleaned.length < 3) return false;
-      if (/^\d+$/.test(cleaned)) return false;
-      return true;
-    });
-
-    const brand = candidates[0] || "Local Find";
-    const product = hint;
-    const normalizedName = normalizeWhitespace(`${brand} ${product}`).toLowerCase();
-    if (seen.has(normalizedName)) continue;
-    seen.add(normalizedName);
-
-    mentions.push({
-      brand,
-      product,
-      normalized_name: normalizedName,
-      source_text: sentence,
-      detected_lang: lang,
-      hashtag: "",
-      local_bonus: ["th", "zh", "jp", "kr"].includes(lang) ? 8 : 4,
-      exclusivity_bonus: inferExclusivityBonus(sentence, country),
-      generic_penalty: inferGenericPenalty(sentence),
-      platform: source.platform || inferPlatform(source.url)
-    });
+      mentions.push({
+        brand,
+        product,
+        normalized_name: normalizedName,
+        source_text: sentence,
+        detected_lang: lang,
+        hashtag: "",
+        local_bonus: ["th", "zh", "jp", "kr"].includes(lang) ? 8 : 4,
+        exclusivity_bonus: inferExclusivityBonus(sentence, country),
+        generic_penalty: inferGenericPenalty(sentence),
+        platform: source.platform || inferPlatform(source.url)
+      });
+    }
   }
 
-  return mentions;
+  // Pass 3: fallback to page title / description style extraction
+  if (mentions.length === 0) {
+    const words = normalizedText
+      .split(/\s+/)
+      .map((w) => w.replace(/[^a-zA-Z0-9\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF-]/g, ""))
+      .filter(Boolean)
+      .filter((w) => w.length >= 3)
+      .slice(0, 30);
+
+    if (words.length >= 2) {
+      const brand = words[0];
+      const product = words[1];
+      const normalizedName = normalizeWhitespace(`${brand} ${product}`).toLowerCase();
+
+      mentions.push({
+        brand,
+        product,
+        normalized_name: normalizedName,
+        source_text: normalizedText.slice(0, 220),
+        detected_lang: lang,
+        hashtag: "",
+        local_bonus: ["th", "zh", "jp", "kr"].includes(lang) ? 6 : 2,
+        exclusivity_bonus: inferExclusivityBonus(normalizedText, country),
+        generic_penalty: inferGenericPenalty(normalizedText),
+        platform: source.platform || inferPlatform(source.url)
+      });
+    }
+  }
+
+  return mentions.slice(0, 8);
 }
 
 async function savePost(runId, source, country, category, mention) {
@@ -474,6 +581,8 @@ async function runSocialScan({ country, category }) {
         category: normalizedCategory,
         source
       });
+
+      if (!mentions.length) continue;
 
       for (const mention of mentions) {
         await savePost(runId, source, normalizedCountry, normalizedCategory, mention);
