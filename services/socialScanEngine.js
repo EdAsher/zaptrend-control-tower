@@ -36,6 +36,13 @@ function normalizeWhitespace(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeToken(text) {
+  return normalizeWhitespace(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\s-]/g, "")
+    .trim();
+}
+
 function stripHtml(html) {
   return String(html || "")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -95,6 +102,52 @@ function isRetailLikeUrl(url = "") {
   return blocked.some((x) => u.includes(x));
 }
 
+function getBlockedTerms() {
+  return new Set([
+    "instagram",
+    "tiktok",
+    "youtube",
+    "facebook",
+    "lemon8",
+    "creator",
+    "creators",
+    "influencer",
+    "review",
+    "reviews",
+    "video",
+    "videos",
+    "viral",
+    "shopping",
+    "shop",
+    "official",
+    "follow",
+    "like",
+    "comment",
+    "share",
+    "homepage",
+    "profile",
+    "login",
+    "sign in",
+    "sign up",
+    "home",
+    "feed",
+    "post",
+    "posts",
+    "explore",
+    "reels",
+    "shorts"
+  ]);
+}
+
+function hasCategoryHint(text, category) {
+  const t = normalizeToken(text);
+  const rules = getCategoryKeywordRules(category);
+
+  return rules.productHints.some((hint) =>
+    t.includes(normalizeToken(hint))
+  );
+}
+
 async function getHealthySources(country, category) {
   const db = getDb();
   const now = new Date().toISOString();
@@ -141,11 +194,9 @@ function extractJsonLdText(html) {
   );
   if (!matches) return "";
 
-  const combined = matches
-    .map((block) => stripHtml(block))
-    .join(" ");
-
-  return normalizeWhitespace(combined);
+  return normalizeWhitespace(
+    matches.map((block) => stripHtml(block)).join(" ")
+  );
 }
 
 function extractInterestingTextBlocks(html) {
@@ -344,9 +395,8 @@ function candidateBrandProductFromSentence(sentence, hint) {
   const hintIndex = clean.findIndex((x) => x.toLowerCase() === String(hint).toLowerCase());
 
   if (hintIndex > 0) {
-    const brand = clean[hintIndex - 1];
     return {
-      brand: brand || "Local Find",
+      brand: clean[hintIndex - 1] || "Local Find",
       product: hint
     };
   }
@@ -355,6 +405,51 @@ function candidateBrandProductFromSentence(sentence, hint) {
     brand: clean[0] || "Local Find",
     product: hint
   };
+}
+
+function isLowQualityMention(mention, category) {
+  const blocked = getBlockedTerms();
+
+  const brand = normalizeToken(mention.brand);
+  const product = normalizeToken(mention.product);
+  const itemName = normalizeToken(mention.item_name || `${mention.brand} ${mention.product}`);
+  const sourceText = normalizeToken(mention.source_text);
+
+  if (!brand || !product) return true;
+  if (brand.length < 3 || product.length < 3) return true;
+
+  if (blocked.has(brand) || blocked.has(product)) return true;
+  if (itemName && blocked.has(itemName)) return true;
+
+  if (brand === product && blocked.has(brand)) return true;
+  if (brand === product && brand.length < 5) return true;
+
+  if (itemName === "instagram instagram" || itemName === "tiktok tiktok") return true;
+
+  if (!hasCategoryHint(sourceText, category)) {
+    const rules = getCategoryKeywordRules(category);
+    const knownBrandHit = rules.brands.some(
+      (b) => normalizeToken(sourceText).includes(normalizeToken(b))
+    );
+    if (!knownBrandHit) return true;
+  }
+
+  return false;
+}
+
+function finalizeMention(rawMention, category) {
+  const mention = {
+    ...rawMention,
+    brand: normalizeWhitespace(rawMention.brand),
+    product: normalizeWhitespace(rawMention.product),
+    item_name: normalizeWhitespace(`${rawMention.brand || ""} ${rawMention.product || ""}`),
+    normalized_name: normalizeWhitespace(
+      rawMention.normalized_name || `${rawMention.brand || ""} ${rawMention.product || ""}`
+    ).toLowerCase()
+  };
+
+  if (isLowQualityMention(mention, category)) return null;
+  return mention;
 }
 
 function extractMentionsFromText({
@@ -368,10 +463,9 @@ function extractMentionsFromText({
   const lang = detectLanguageHeuristic(normalizedText);
   const { brands, productHints } = getCategoryKeywordRules(category);
 
-  const mentions = [];
+  const rawMentions = [];
   const seen = new Set();
 
-  // Pass 1: known brands + optional product hints
   for (const sentence of sentences) {
     const lower = sentence.toLowerCase();
 
@@ -391,7 +485,7 @@ function extractMentionsFromText({
       if (seen.has(normalizedName)) continue;
       seen.add(normalizedName);
 
-      mentions.push({
+      rawMentions.push({
         brand,
         product,
         normalized_name: normalizedName,
@@ -406,8 +500,7 @@ function extractMentionsFromText({
     }
   }
 
-  // Pass 2: category hint-driven extraction
-  if (mentions.length < 2) {
+  if (rawMentions.length < 2) {
     for (const sentence of sentences) {
       const lower = sentence.toLowerCase();
 
@@ -422,7 +515,7 @@ function extractMentionsFromText({
       if (seen.has(normalizedName)) continue;
       seen.add(normalizedName);
 
-      mentions.push({
+      rawMentions.push({
         brand,
         product,
         normalized_name: normalizedName,
@@ -437,8 +530,7 @@ function extractMentionsFromText({
     }
   }
 
-  // Pass 3: fallback to page title / description style extraction
-  if (mentions.length === 0) {
+  if (rawMentions.length === 0) {
     const words = normalizedText
       .split(/\s+/)
       .map((w) => w.replace(/[^a-zA-Z0-9\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF-]/g, ""))
@@ -447,14 +539,10 @@ function extractMentionsFromText({
       .slice(0, 30);
 
     if (words.length >= 2) {
-      const brand = words[0];
-      const product = words[1];
-      const normalizedName = normalizeWhitespace(`${brand} ${product}`).toLowerCase();
-
-      mentions.push({
-        brand,
-        product,
-        normalized_name: normalizedName,
+      rawMentions.push({
+        brand: words[0],
+        product: words[1],
+        normalized_name: normalizeWhitespace(`${words[0]} ${words[1]}`).toLowerCase(),
         source_text: normalizedText.slice(0, 220),
         detected_lang: lang,
         hashtag: "",
@@ -466,7 +554,11 @@ function extractMentionsFromText({
     }
   }
 
-  return mentions.slice(0, 8);
+  const finalMentions = rawMentions
+    .map((m) => finalizeMention(m, category))
+    .filter(Boolean);
+
+  return finalMentions.slice(0, 8);
 }
 
 async function savePost(runId, source, country, category, mention) {
