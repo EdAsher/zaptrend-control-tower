@@ -612,21 +612,59 @@ async function runSocialScan({ country, category }) {
       sourceIds.push(source.source_id);
 
       const fetched = await fetchPublicSourceContent(source);
-      if (!fetched.ok || !fetched.source_text) {
+
+      let validMentions = [];
+
+      if (fetched.ok && fetched.source_text) {
+        validMentions = extractMentionsFromText({
+          text: fetched.source_text,
+          country: normalizedCountry,
+          category: normalizedCategory,
+          source
+        });
+      }
+
+      const sourceRef = db.collection("social_sources").doc(source.source_id);
+      const sourceSnap = await sourceRef.get();
+      const existing = sourceSnap.exists ? sourceSnap.data() : {};
+
+      let lowYieldCount = Number(existing.low_yield_count || 0);
+
+      if (!validMentions.length) {
+        lowYieldCount += 1;
         sourcesFailed += 1;
+
+        const updatePayload = {
+          low_yield_count: lowYieldCount,
+          updated_at_iso: nowIso()
+        };
+
+        if (lowYieldCount >= 3) {
+          updatePayload.health_status = "low_yield";
+        }
+
+        if (lowYieldCount >= 5) {
+          updatePayload.auto_disabled = true;
+          updatePayload.status = "disabled";
+          updatePayload.auto_disabled_reason = "low_yield";
+        }
+
+        await sourceRef.set(updatePayload, { merge: true });
         continue;
       }
 
-      const mentions = extractMentionsFromText({
-        text: fetched.source_text,
-        country: normalizedCountry,
-        category: normalizedCategory,
-        source
-      });
+      lowYieldCount = 0;
 
-      if (!mentions.length) continue;
+      await sourceRef.set(
+        {
+          low_yield_count: 0,
+          last_yield_at: nowIso(),
+          updated_at_iso: nowIso()
+        },
+        { merge: true }
+      );
 
-      for (const mention of mentions) {
+      for (const mention of validMentions) {
         await savePost(runId, source, normalizedCountry, normalizedCategory, mention);
         postsSaved += 1;
       }
