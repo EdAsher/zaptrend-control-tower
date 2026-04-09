@@ -169,22 +169,37 @@ async function getHealthySources(country, category) {
     .where("status", "==", "active")
     .get();
 
-  const sources = snap.docs
+  let sources = snap.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }))
     .filter((x) => {
       const withinHealthWindow =
         !x.next_health_check_at || String(x.next_health_check_at) > now;
 
       return (
-        x.health_status === "healthy" &&
         !x.auto_disabled &&
         withinHealthWindow &&
-        !isRetailLikeUrl(x.url)
+        !isRetailLikeUrl(x.url) &&
+        (x.health_status === "healthy" || x.health_status === "low_yield")
       );
     });
 
-  sources.sort((a, b) => (Number(b.yield_score || 0) - Number(a.yield_score || 0)));
-  return sources.slice(0, 10);
+  sources.sort((a, b) => Number(b.yield_score || 0) - Number(a.yield_score || 0));
+
+  const healthy = sources.filter((x) => x.health_status === "healthy");
+  const lowYield = sources.filter((x) => x.health_status === "low_yield");
+
+  const prioritized = [...healthy.slice(0, 8)];
+
+  if (prioritized.length < 3) {
+    const fallback = lowYield.slice(0, 2);
+    for (const src of fallback) {
+      if (!prioritized.find((x) => x.source_id === src.source_id)) {
+        prioritized.push(src);
+      }
+    }
+  }
+
+  return prioritized.slice(0, 10);
 }
 
 function extractMetaContent(html, attr, value) {
@@ -247,7 +262,7 @@ async function fetchPublicSourceContent(source) {
       method: "GET",
       redirect: "follow",
       headers: {
-        "User-Agent": "Mozilla/5.0 ZapTrendLite/2.4",
+        "User-Agent": "Mozilla/5.0 ZapTrendLite/2.5",
         Accept: "text/html,application/xhtml+xml"
       }
     });
@@ -642,7 +657,8 @@ async function runSocialScan({ country, category }) {
         const updatePayload = {
           low_yield_count: lowYieldCount,
           yield_score: decayScore,
-          updated_at_iso: nowIso()
+          updated_at_iso: nowIso(),
+          next_health_check_at: addDaysIsoSafe(lowYieldCount >= 5 ? 30 : lowYieldCount >= 3 ? 14 : 7)
         };
 
         if (lowYieldCount >= 3) {
@@ -669,7 +685,10 @@ async function runSocialScan({ country, category }) {
           yield_score: yieldScore,
           updated_at_iso: nowIso(),
           health_status: "healthy",
-          status: "active"
+          status: "active",
+          auto_disabled: false,
+          auto_disabled_reason: "",
+          next_health_check_at: nowIso()
         },
         { merge: true }
       );
@@ -713,6 +732,12 @@ async function runSocialScan({ country, category }) {
     );
     throw error;
   }
+}
+
+function addDaysIsoSafe(days) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString();
 }
 
 module.exports = {

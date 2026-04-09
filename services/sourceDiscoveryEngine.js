@@ -106,7 +106,7 @@ async function upsertSource({
   country,
   category,
   health,
-  discoveredBy = "lite_v2_4_discovery"
+  discoveredBy = "lite_v2_5_discovery"
 }) {
   const db = getDb();
   const ref = db.collection("social_sources").doc(source.source_id);
@@ -179,7 +179,7 @@ async function runScheduledHealthRecheck(country, category) {
       country,
       category,
       health,
-      discoveredBy: source.discovered_by || "lite_v2_4_discovery"
+      discoveredBy: source.discovered_by || "lite_v2_5_discovery"
     });
 
     if (health.ok) healthyCount += 1;
@@ -191,6 +191,14 @@ async function runScheduledHealthRecheck(country, category) {
     rehealthy_count: healthyCount,
     reunhealthy_count: unhealthyCount
   };
+}
+
+function canRetrySource(existing) {
+  const now = new Date().toISOString();
+  const retryAt = String(existing?.next_health_check_at || "");
+
+  if (!retryAt) return true;
+  return retryAt <= now;
 }
 
 async function runSourceDiscovery({ country, category }) {
@@ -231,14 +239,19 @@ async function runSourceDiscovery({ country, category }) {
       const existingSnap = await db.collection("social_sources").doc(seed.source_id).get();
 
       if (existingSnap.exists) {
-        const existing = existingSnap.data();
+        const existing = existingSnap.data() || {};
 
-        if (existing.auto_disabled) continue;
+        if (existing.auto_disabled && !canRetrySource(existing)) {
+          skippedCount += 1;
+          continue;
+        }
 
         if (
           existing.health_status === "low_yield" &&
-          Number(existing.low_yield_count || 0) >= 3
+          Number(existing.low_yield_count || 0) >= 3 &&
+          !canRetrySource(existing)
         ) {
+          skippedCount += 1;
           continue;
         }
       }
