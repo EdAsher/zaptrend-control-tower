@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 const { getCategoryDictionary } = require("../config/categoryDictionaries");
+const { extractProductsFromText } = require("./openaiExtractor");
 
 function getDb() {
   return getFirestore();
@@ -679,14 +680,41 @@ async function runSocialScan({ country, category }) {
 
       let validMentions = [];
 
-      if (fetched.ok && fetched.source_text) {
-        validMentions = extractMentionsFromText({
-          text: fetched.source_text,
-          country: normalizedCountry,
-          category: normalizedCategory,
-          source
-        });
-      }
+let validMentions = [];
+
+if (fetched.ok && fetched.source_text) {
+
+  // STEP 1 — Rule-based extraction (fast)
+  validMentions = extractMentionsFromText({
+    text: fetched.source_text,
+    country: normalizedCountry,
+    category: normalizedCategory,
+    source
+  });
+
+  // STEP 2 — OpenAI fallback (CRITICAL FIX)
+  if (!validMentions.length) {
+    console.log("⚠️ No rule-based mentions, using AI fallback:", source.url);
+
+    const aiResults = await extractProductsFromText({
+      text: fetched.source_text,
+      category: normalizedCategory,
+      country: normalizedCountry
+    });
+
+    validMentions = aiResults.map((item) => ({
+      brand: item.brand,
+      product: item.product,
+      normalized_name: `${item.brand} ${item.product}`.toLowerCase(),
+      source_text: fetched.source_text.slice(0, 200),
+      detected_lang: "unknown",
+      local_bonus: 6,
+      exclusivity_bonus: 6,
+      generic_penalty: 0,
+      platform: source.platform
+    }));
+  }
+}
 
       const sourceRef = db.collection("social_sources").doc(source.source_id);
       const sourceSnap = await sourceRef.get();
