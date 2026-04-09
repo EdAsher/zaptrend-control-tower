@@ -16,6 +16,12 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function addDaysIsoSafe(days) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString();
+}
+
 function safeId(value) {
   return String(value || "")
     .trim()
@@ -44,6 +50,17 @@ function normalizeToken(text) {
     .trim();
 }
 
+function decodeHtmlEntities(text = "") {
+  return String(text)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
 function stripHtml(html) {
   return String(html || "")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -51,11 +68,6 @@ function stripHtml(html) {
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
     .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#x27;/gi, "'")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -136,7 +148,9 @@ function getBlockedTerms() {
     "posts",
     "explore",
     "reels",
-    "shorts"
+    "shorts",
+    "watch",
+    "channel"
   ]);
 }
 
@@ -203,45 +217,76 @@ async function getHealthySources(country, category) {
 }
 
 function extractMetaContent(html, attr, value) {
-  const regex = new RegExp(
-    `<meta[^>]+${attr}=["']${value}["'][^>]+content=["']([^"']+)["'][^>]*>`,
-    "i"
-  );
-  const match = String(html || "").match(regex);
-  return match ? normalizeWhitespace(match[1]) : "";
+  const patterns = [
+    new RegExp(`<meta[^>]+${attr}=["']${value}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+${attr}=["']${value}["'][^>]*>`, "i")
+  ];
+
+  for (const regex of patterns) {
+    const match = String(html || "").match(regex);
+    if (match) return normalizeWhitespace(decodeHtmlEntities(match[1]));
+  }
+
+  return "";
 }
 
 function extractTitle(html) {
   const match = String(html || "").match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  return match ? normalizeWhitespace(stripHtml(match[1])) : "";
+  return match ? normalizeWhitespace(decodeHtmlEntities(stripHtml(match[1]))) : "";
 }
 
 function extractJsonLdText(html) {
-  const matches = String(html || "").match(
-    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+  const matches = Array.from(
+    String(html || "").matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)
   );
-  if (!matches) return "";
 
-  return normalizeWhitespace(
-    matches.map((block) => stripHtml(block)).join(" ")
-  );
+  if (!matches.length) return "";
+
+  const chunks = matches
+    .map((m) => decodeHtmlEntities(stripHtml(m[1])))
+    .filter(Boolean);
+
+  return normalizeWhitespace(chunks.join(" "));
 }
 
 function extractInterestingTextBlocks(html) {
   const clean = String(html || "");
 
-  const h1s = Array.from(clean.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)).map((m) =>
-    normalizeWhitespace(stripHtml(m[1]))
-  );
-  const h2s = Array.from(clean.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)).map((m) =>
-    normalizeWhitespace(stripHtml(m[1]))
-  );
-  const paras = Array.from(clean.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi))
-    .map((m) => normalizeWhitespace(stripHtml(m[1])))
-    .filter((x) => x.length >= 20)
-    .slice(0, 40);
+  const blocks = [];
 
-  return [...h1s, ...h2s, ...paras].join(" ");
+  const regexes = [
+    /<h1[^>]*>([\s\S]*?)<\/h1>/gi,
+    /<h2[^>]*>([\s\S]*?)<\/h2>/gi,
+    /<h3[^>]*>([\s\S]*?)<\/h3>/gi,
+    /<p[^>]*>([\s\S]*?)<\/p>/gi
+  ];
+
+  for (const regex of regexes) {
+    const matches = Array.from(clean.matchAll(regex));
+    for (const m of matches) {
+      const text = normalizeWhitespace(decodeHtmlEntities(stripHtml(m[1])));
+      if (text.length >= 12) blocks.push(text);
+    }
+  }
+
+  return normalizeWhitespace(blocks.slice(0, 60).join(" "));
+}
+
+function extractYouTubeStructuredText(html) {
+  const title = extractTitle(html);
+  const ogTitle = extractMetaContent(html, "property", "og:title");
+  const ogDesc = extractMetaContent(html, "property", "og:description");
+  const metaDesc = extractMetaContent(html, "name", "description");
+  const keywords = extractMetaContent(html, "name", "keywords");
+  const jsonLd = extractJsonLdText(html);
+
+  const text = normalizeWhitespace(
+    [title, ogTitle, ogDesc, metaDesc, keywords, jsonLd]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  return text;
 }
 
 async function fetchPublicSourceContent(source) {
@@ -262,30 +307,37 @@ async function fetchPublicSourceContent(source) {
       method: "GET",
       redirect: "follow",
       headers: {
-        "User-Agent": "Mozilla/5.0 ZapTrendLite/2.5",
+        "User-Agent": "Mozilla/5.0 ZapTrendLite/4.0",
         Accept: "text/html,application/xhtml+xml"
       }
     });
 
     const raw = await res.text();
 
-    const title = extractTitle(raw);
-    const ogTitle = extractMetaContent(raw, "property", "og:title");
-    const ogDesc = extractMetaContent(raw, "property", "og:description");
-    const metaDesc = extractMetaContent(raw, "name", "description");
-    const jsonLd = extractJsonLdText(raw);
-
     let mergedText = "";
 
-    if (["instagram", "tiktok", "facebook", "lemon8"].includes(platform)) {
+    if (platform === "youtube") {
+      mergedText = extractYouTubeStructuredText(raw);
+    } else if (["instagram", "tiktok", "facebook", "lemon8"].includes(platform)) {
+      const title = extractTitle(raw);
+      const ogTitle = extractMetaContent(raw, "property", "og:title");
+      const ogDesc = extractMetaContent(raw, "property", "og:description");
+      const metaDesc = extractMetaContent(raw, "name", "description");
+      const jsonLd = extractJsonLdText(raw);
+
       mergedText = normalizeWhitespace(
         [title, ogTitle, ogDesc, metaDesc, jsonLd]
           .filter(Boolean)
           .join(" ")
       );
     } else {
+      const title = extractTitle(raw);
+      const ogTitle = extractMetaContent(raw, "property", "og:title");
+      const ogDesc = extractMetaContent(raw, "property", "og:description");
+      const metaDesc = extractMetaContent(raw, "name", "description");
+      const jsonLd = extractJsonLdText(raw);
       const interestingBlocks = extractInterestingTextBlocks(raw);
-      const bodyText = stripHtml(raw);
+      const bodyText = normalizeWhitespace(decodeHtmlEntities(stripHtml(raw)));
 
       mergedText = normalizeWhitespace(
         [title, ogTitle, ogDesc, metaDesc, jsonLd, interestingBlocks, bodyText]
@@ -294,9 +346,9 @@ async function fetchPublicSourceContent(source) {
       );
     }
 
-    if (!mergedText || mergedText.length < 50) {
-      const fallback = stripHtml(raw).slice(0, 800);
-      mergedText = normalizeWhitespace(fallback);
+    if (!mergedText || mergedText.length < 40) {
+      const fallback = normalizeWhitespace(decodeHtmlEntities(stripHtml(raw))).slice(0, 1200);
+      mergedText = fallback;
     }
 
     return {
@@ -375,6 +427,21 @@ function candidateBrandProductFromSentence(sentence, hint) {
   };
 }
 
+function containsPlatformGarbage(text) {
+  const t = normalizeToken(text);
+  const blockedPhrases = [
+    "youtube channel",
+    "watch now",
+    "subscribe",
+    "follow me",
+    "instagram",
+    "tiktok",
+    "facebook",
+    "lemon8"
+  ];
+  return blockedPhrases.some((x) => t.includes(normalizeToken(x)));
+}
+
 function isLowQualityMention(mention, category) {
   const blocked = getBlockedTerms();
 
@@ -393,6 +460,7 @@ function isLowQualityMention(mention, category) {
   if (brand === product && brand.length < 5) return true;
 
   if (itemName === "instagram instagram" || itemName === "tiktok tiktok") return true;
+  if (containsPlatformGarbage(sourceText)) return true;
 
   if (!hasCategoryHint(sourceText, category)) {
     const rules = getCategoryKeywordRules(category);
@@ -427,13 +495,14 @@ function extractMentionsFromText({
   source
 }) {
   const normalizedText = normalizeWhitespace(text);
-  const sentences = splitSentences(normalizedText).slice(0, 200);
+  const sentences = splitSentences(normalizedText).slice(0, 250);
   const lang = detectLanguageHeuristic(normalizedText);
   const { brands, productHints } = getCategoryKeywordRules(category);
 
   const rawMentions = [];
   const seen = new Set();
 
+  // pass 1: known brand + product hints
   for (const sentence of sentences) {
     const lower = sentence.toLowerCase();
 
@@ -468,7 +537,8 @@ function extractMentionsFromText({
     }
   }
 
-  if (rawMentions.length < 2) {
+  // pass 2: product-hint fallback
+  if (rawMentions.length < 3) {
     for (const sentence of sentences) {
       const lower = sentence.toLowerCase();
 
@@ -498,35 +568,11 @@ function extractMentionsFromText({
     }
   }
 
-  if (rawMentions.length === 0) {
-    const words = normalizedText
-      .split(/\s+/)
-      .map((w) => w.replace(/[^a-zA-Z0-9\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF-]/g, ""))
-      .filter(Boolean)
-      .filter((w) => w.length >= 3)
-      .slice(0, 30);
-
-    if (words.length >= 2) {
-      rawMentions.push({
-        brand: words[0],
-        product: words[1],
-        normalized_name: normalizeWhitespace(`${words[0]} ${words[1]}`).toLowerCase(),
-        source_text: normalizedText.slice(0, 220),
-        detected_lang: lang,
-        hashtag: "",
-        local_bonus: ["th", "zh", "jp", "kr"].includes(lang) ? 6 : 2,
-        exclusivity_bonus: inferExclusivityBonus(normalizedText, country),
-        generic_penalty: inferGenericPenalty(normalizedText),
-        platform: source.platform || inferPlatform(source.url)
-      });
-    }
-  }
-
   const finalMentions = rawMentions
     .map((m) => finalizeMention(m, category))
     .filter(Boolean);
 
-  return finalMentions.slice(0, 8);
+  return finalMentions.slice(0, 12);
 }
 
 async function savePost(runId, source, country, category, mention) {
@@ -732,12 +778,6 @@ async function runSocialScan({ country, category }) {
     );
     throw error;
   }
-}
-
-function addDaysIsoSafe(days) {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + Number(days || 0));
-  return d.toISOString();
 }
 
 module.exports = {
