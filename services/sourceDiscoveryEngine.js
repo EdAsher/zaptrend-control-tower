@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 const { getDiscoveryConfig } = require("../config/discoveryMatrix");
+const { getCuratedSeeds } = require("../config/curatedSeeds");
 
 function getDb() {
   return getFirestore();
@@ -66,79 +67,24 @@ function isRetailBrandCandidate(source) {
     "lazada",
     "tokopedia",
     "taobao",
-    "tmall"
+    "tmall",
+    "duckduckgo",
+    "google",
+    "bing",
+    "yahoo"
   ];
   return blocked.some((x) => text.includes(x));
 }
 
-function isAllowedCreatorUrl(url = "") {
+function isSearchEngineUrl(url = "") {
   const u = String(url).toLowerCase();
-
-  const allowed =
-    u.includes("instagram.com/") ||
-    u.includes("tiktok.com/@") ||
-    u.includes("youtube.com/@") ||
-    u.includes("youtube.com/c/") ||
-    u.includes("youtube.com/channel/") ||
-    u.includes("facebook.com/") ||
-    u.includes("lemon8-app.com/") ||
-    u.includes("lemon8.") ||
-    /^https?:\/\/[^/]+/.test(u);
-
-  if (!allowed) return false;
-
-  const blocked = [
-    "/p/",
-    "/reel/",
-    "/reels/",
-    "/explore",
-    "/video/",
-    "/videos/",
-    "/shop",
-    "/shopping",
-    "/product",
-    "/products",
-    "/search",
-    "/hashtag",
-    "/tag/",
-    "/tags/",
-    "amazon.",
-    "shopee.",
-    "lazada.",
-    "tokopedia.",
-    "taobao.",
-    "tmall.",
-    "watsons",
-    "guardian",
-    "sephora"
-  ];
-
-  return !blocked.some((x) => u.includes(x));
-}
-
-function decodeHtmlEntities(text = "") {
-  return String(text)
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
-}
-
-function stripHtml(html) {
-  return normalizeWhitespace(
-    String(html || "")
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-  );
-}
-
-function canRetrySource(existing) {
-  const now = new Date().toISOString();
-  const retryAt = String(existing?.next_health_check_at || "");
-  if (!retryAt) return true;
-  return retryAt <= now;
+  return [
+    "duckduckgo.com",
+    "google.com",
+    "bing.com",
+    "search.yahoo.com",
+    "yahoo.com"
+  ].some((x) => u.includes(x));
 }
 
 async function checkSourceHealth(source) {
@@ -153,12 +99,21 @@ async function checkSourceHealth(source) {
     };
   }
 
+  if (isSearchEngineUrl(url)) {
+    return {
+      ok: false,
+      health_status: "unavailable",
+      health_http_status: null,
+      reason: "search_engine_url"
+    };
+  }
+
   try {
     const res = await fetch(url, {
       method: "GET",
       redirect: "follow",
       headers: {
-        "User-Agent": "Mozilla/5.0 ZapTrendLite/3.0",
+        "User-Agent": "Mozilla/5.0 ZapTrendLite/3.2",
         Accept: "text/html,application/xhtml+xml"
       }
     });
@@ -173,7 +128,12 @@ async function checkSourceHealth(source) {
     }
 
     const html = await res.text();
-    const text = stripHtml(html).slice(0, 500);
+    const text = normalizeWhitespace(
+      String(html || "")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+    ).slice(0, 500);
 
     if (!text || text.length < 20) {
       return {
@@ -213,7 +173,7 @@ async function upsertSource({
   country,
   category,
   health,
-  discoveredBy = "phase3_real_discovery"
+  discoveredBy = "phase3_2_curated_seed"
 }) {
   const db = getDb();
   const ref = db.collection("social_sources").doc(source.source_id);
@@ -288,7 +248,7 @@ async function runScheduledHealthRecheck(country, category) {
       country,
       category,
       health,
-      discoveredBy: source.discovered_by || "phase3_real_discovery"
+      discoveredBy: source.discovered_by || "phase3_2_curated_seed"
     });
 
     if (health.ok) healthyCount += 1;
@@ -302,6 +262,13 @@ async function runScheduledHealthRecheck(country, category) {
   };
 }
 
+function canRetrySource(existing) {
+  const now = new Date().toISOString();
+  const retryAt = String(existing?.next_health_check_at || "");
+  if (!retryAt) return true;
+  return retryAt <= now;
+}
+
 async function fetchSearchResults(query) {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 
@@ -309,13 +276,12 @@ async function fetchSearchResults(query) {
     const res = await fetch(url, {
       method: "GET",
       headers: {
-        "User-Agent": "Mozilla/5.0 ZapTrendLite/3.0",
+        "User-Agent": "Mozilla/5.0 ZapTrendLite/3.2",
         Accept: "text/html,application/xhtml+xml"
       }
     });
 
     if (!res.ok) return [];
-
     const html = await res.text();
     return extractSearchCandidatesFromHtml(html);
   } catch {
@@ -323,19 +289,13 @@ async function fetchSearchResults(query) {
   }
 }
 
-function normalizeDiscoveredUrl(rawUrl = "") {
-  const url = decodeHtmlEntities(rawUrl).trim();
-
-  if (!url) return "";
-  if (!/^https?:\/\//i.test(url)) return "";
-
-  try {
-    const u = new URL(url);
-    u.hash = "";
-    return u.toString();
-  } catch {
-    return "";
-  }
+function decodeHtmlEntities(text = "") {
+  return String(text)
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
 }
 
 function extractSearchCandidatesFromHtml(html = "") {
@@ -346,18 +306,29 @@ function extractSearchCandidatesFromHtml(html = "") {
   let match;
 
   while ((match = anchorRegex.exec(html)) !== null) {
-    const href = normalizeDiscoveredUrl(match[1]);
-    const label = stripHtml(match[2]);
+    const href = decodeHtmlEntities(match[1] || "").trim();
+    const label = normalizeWhitespace(
+      String(match[2] || "").replace(/<[^>]+>/g, " ")
+    );
 
-    if (!href) continue;
-    if (!isAllowedCreatorUrl(href)) continue;
+    if (!/^https?:\/\//i.test(href)) continue;
+    if (isSearchEngineUrl(href)) continue;
     if (seen.has(href)) continue;
     seen.add(href);
 
-    results.push({
-      url: href,
-      label
-    });
+    if (![
+      "instagram.com/",
+      "tiktok.com/@",
+      "youtube.com/@",
+      "youtube.com/c/",
+      "youtube.com/channel/",
+      "facebook.com/",
+      "lemon8"
+    ].some((x) => href.toLowerCase().includes(x))) {
+      continue;
+    }
+
+    results.push({ url: href, label });
   }
 
   return results.slice(0, 20);
@@ -369,8 +340,7 @@ function deriveHandleFromUrl(url = "", platform = "web") {
     const parts = u.pathname.split("/").filter(Boolean);
 
     if (platform === "tiktok") {
-      const handle = parts.find((p) => p.startsWith("@"));
-      return handle || "";
+      return parts.find((p) => p.startsWith("@")) || "";
     }
 
     if (platform === "instagram") {
@@ -378,12 +348,7 @@ function deriveHandleFromUrl(url = "", platform = "web") {
     }
 
     if (platform === "youtube") {
-      if (parts[0] === "@" && parts[1]) return `@${parts[1]}`;
       if (parts[0] && parts[0].startsWith("@")) return parts[0];
-      return parts[parts.length - 1] || "";
-    }
-
-    if (platform === "facebook" || platform === "lemon8" || platform === "web") {
       return parts[parts.length - 1] || "";
     }
 
@@ -406,7 +371,6 @@ function buildCandidateSource(candidate, country, category, discoveryQueries) {
   const platform = guessPlatform(candidate.url);
   const handle = deriveHandleFromUrl(candidate.url, platform);
   const display_name = deriveDisplayName(candidate);
-
   const sourceKey = hashId(`${country}|${category}|${candidate.url}`);
 
   return {
@@ -466,9 +430,17 @@ async function runSourceDiscovery({ country, category }) {
   });
 
   try {
-    let candidates = await discoverRealCandidates(normalizedCountry, normalizedCategory);
+    const curatedSeeds = getCuratedSeeds(normalizedCountry, normalizedCategory).map((seed) => ({
+      ...seed,
+      discovery_queries: getDiscoveryConfig(normalizedCountry, normalizedCategory).discovery_queries || []
+    }));
 
-    // fallback to config seed sources only if real discovery found nothing
+    let candidates = [...curatedSeeds];
+
+    if (!candidates.length) {
+      candidates = await discoverRealCandidates(normalizedCountry, normalizedCategory);
+    }
+
     if (!candidates.length) {
       const config = getDiscoveryConfig(normalizedCountry, normalizedCategory);
       candidates = (config.seed_sources || []).map((seed) => ({
@@ -503,7 +475,7 @@ async function runSourceDiscovery({ country, category }) {
         }
       }
 
-      if (isRetailBrandCandidate(candidate)) {
+      if (isRetailBrandCandidate(candidate) || isSearchEngineUrl(candidate.url)) {
         skippedCount += 1;
         continue;
       }
