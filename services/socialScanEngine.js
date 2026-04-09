@@ -678,8 +678,6 @@ async function runSocialScan({ country, category }) {
 
       const fetched = await fetchPublicSourceContent(source);
 
-      let validMentions = [];
-
 let validMentions = [];
 
 if (fetched.ok && fetched.source_text) {
