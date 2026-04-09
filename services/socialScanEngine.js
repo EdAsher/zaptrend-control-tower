@@ -169,7 +169,7 @@ async function getHealthySources(country, category) {
     .where("status", "==", "active")
     .get();
 
-  return snap.docs
+  const sources = snap.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }))
     .filter((x) => {
       const withinHealthWindow =
@@ -182,6 +182,12 @@ async function getHealthySources(country, category) {
         !isRetailLikeUrl(x.url)
       );
     });
+
+  sources.sort((a, b) => {
+    return (b.yield_score || 0) - (a.yield_score || 0);
+  });
+
+  return sources.slice(0, 10);
 }
 
 function extractMetaContent(html, attr, value) {
@@ -634,8 +640,11 @@ async function runSocialScan({ country, category }) {
         lowYieldCount += 1;
         sourcesFailed += 1;
 
+        const decayScore = Math.max(0, Number(existing.yield_score || 0) - 5);
+
         const updatePayload = {
           low_yield_count: lowYieldCount,
+          yield_score: decayScore,
           updated_at_iso: nowIso()
         };
 
@@ -653,13 +662,17 @@ async function runSocialScan({ country, category }) {
         continue;
       }
 
-      lowYieldCount = 0;
+      const yieldScore =
+        Number(existing.yield_score || 0) + validMentions.length * 10;
 
       await sourceRef.set(
         {
           low_yield_count: 0,
           last_yield_at: nowIso(),
-          updated_at_iso: nowIso()
+          yield_score: yieldScore,
+          updated_at_iso: nowIso(),
+          health_status: "healthy",
+          status: "active"
         },
         { merge: true }
       );
