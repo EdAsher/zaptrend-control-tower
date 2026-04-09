@@ -183,10 +183,7 @@ async function getHealthySources(country, category) {
       );
     });
 
-  sources.sort((a, b) => {
-    return (b.yield_score || 0) - (a.yield_score || 0);
-  });
-
+  sources.sort((a, b) => (Number(b.yield_score || 0) - Number(a.yield_score || 0)));
   return sources.slice(0, 10);
 }
 
@@ -250,7 +247,7 @@ async function fetchPublicSourceContent(source) {
       method: "GET",
       redirect: "follow",
       headers: {
-        "User-Agent": "Mozilla/5.0 ZapTrendLite/2.3",
+        "User-Agent": "Mozilla/5.0 ZapTrendLite/2.4",
         Accept: "text/html,application/xhtml+xml"
       }
     });

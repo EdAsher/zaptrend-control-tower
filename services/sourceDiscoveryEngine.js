@@ -76,7 +76,6 @@ async function checkSourceHealth(source) {
     };
   }
 
-  // existing lightweight simulated health rule
   if (url.includes("th_beauty_skincare_tiktok_2") || url.includes("thbeautyreviewer2")) {
     return {
       ok: false,
@@ -229,12 +228,28 @@ async function runSourceDiscovery({ country, category }) {
     let skippedCount = 0;
 
     for (const seed of seeds) {
+      const existingSnap = await db.collection("social_sources").doc(seed.source_id).get();
+
+      if (existingSnap.exists) {
+        const existing = existingSnap.data();
+
+        if (existing.auto_disabled) continue;
+
+        if (
+          existing.health_status === "low_yield" &&
+          Number(existing.low_yield_count || 0) >= 3
+        ) {
+          continue;
+        }
+      }
+
       if (isRetailBrandCandidate(seed)) {
         skippedCount += 1;
         continue;
       }
 
       const health = await checkSourceHealth(seed);
+
       await upsertSource({
         source: seed,
         country: normalizedCountry,
